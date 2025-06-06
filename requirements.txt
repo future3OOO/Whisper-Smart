@@ -1,0 +1,26 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+# Core Transcription and Audio Handling
+torch==2.5.1+cu121
+torchaudio==2.5.1+cu121
+torchvision==0.20.1+cu121
+faster-whisper
+sounddevice>=0.4.6
+soundfile>=0.12.1
+numpy>=1.23.5
+webrtcvad>=2.0.10  # tiny, CPU‑only VAD
+
+# User Input and Automation
+keyboard>=0.13.5
+mouse>=0.7.1
+pyperclip
+pyautogui
+
+# Optional / perf
+onnxruntime>=1.16.0
+ctranslate2
+
+# Dev / QA
+pytest
+hypothesis
+hyperfine
