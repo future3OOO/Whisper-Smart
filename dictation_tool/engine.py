@@ -1,12 +1,18 @@
-# ─────────────────────────────────────────────────────────────
-#  Dictation Engine  –  v3.3-titan  (patch-sets 1-4 merged)
-#  * Async clipboard with fast Win32 path + robust paste
-#  * TF-32 / Flash-SDP GPU tuning
-#  * Thread-safe context prompt
-#  * RMS cache + SIMD fast path
-#  * Adaptive batching, back-pressure, dynamic ring growth
-#  * Lean default memory (20 s) + JSONL profiler hook
-# ─────────────────────────────────────────────────────────────
+"""
+dictation_tool.engine  –  v3.3-titan (2025-06-08)
+
+Key features
+────────────
+• Unlimited shadow buffer during mouse-hold (guarantees full 60 s capture)
+• Soft RMS gate (8 000) – keeps very quiet consonants
+• Thread-pool clipboard copy, fast Win32 path + retry paste
+• Flash-SDP / TF-32 GPU tuning
+• Regex post-processor:
+    "foo at bar dot com"  →  foo@bar.com
+    "www . example . com"→  www.example.com
+• Extended punctuation map (“at sign” → @)
+• JSONL profiler, adaptive batching, back-pressure, dynamic ring growth
+"""
 from __future__ import annotations
 
 import asyncio
@@ -18,8 +24,9 @@ import sys
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from math import ceil
-from typing import Deque, Tuple, Optional, Literal
+from typing import Deque, Tuple, Optional, Literal, Any
 
 import numpy as np
 import pyperclip
@@ -28,27 +35,26 @@ from faster_whisper import WhisperModel
 from keyboard import add_hotkey, is_pressed, send as kb_send
 from pynput import mouse
 
-# local imports
-from .config import Config               # patch-set 4 – validated settings
+from .config import Config
 from .io import AudioStream, VADGate, concatenate
 from .utils import LOGGER, timed
-from .utils.profile import prof          # patch-set 4 – JSONL profiler
-# ─────────────────────────────────────────────────────────────
-# ═══════════════════════ Clipboard helpers ═════════════════════
+from .utils.profile import prof
+
+# ══════════════════════════════════ Clipboard helpers ═════════════════════════
 if sys.platform == "win32":
     try:
         import win32clipboard as _wc  # type: ignore
         import win32con as _wcon      # type: ignore
-    except ImportError:               # pywin32 missing
+    except ImportError:               # pywin32 not installed
         _wc = _wcon = None
-else:                                 # non-Windows
+else:
     _wc = _wcon = None
 
 
 def _fast_win_clip(text: str) -> None:
-    """≈ 45 µs RTT clipboard write (Windows only)."""
+    """~45 µs RTT clipboard writer (Windows only)."""
     if not _wc:
-        raise RuntimeError("pywin32 not available")
+        raise RuntimeError("pywin32 unavailable")
     _wc.OpenClipboard()
     try:
         _wc.EmptyClipboard()
@@ -58,11 +64,11 @@ def _fast_win_clip(text: str) -> None:
 
 
 def _paste_retry() -> None:
-    """Ctrl/Cmd-V with up to 3 attempts (20 ms back-off)."""
+    """Ctrl/Cmd-V with up to three attempts (20 ms back-off)."""
     for attempt in range(3):
         try:
             if sys.platform == "win32":
-                user32 = ctypes.windll.user32  # type: ignore
+                user32 = ctypes.windll.user32  # type: ignore[attr-defined]
                 CTRL, V, KEYUP = 0x11, 0x56, 0x0002
                 user32.keybd_event(CTRL, 0, 0, 0)
                 user32.keybd_event(V, 0, 0, 0)
@@ -76,9 +82,10 @@ def _paste_retry() -> None:
             time.sleep(0.02)
     LOGGER.warning("Auto-paste ultimately failed")
 
-# ═══════════════════════ Ring buffer ═══════════════════════════
+# ══════════════════════════════════ Audio ring buffer ═════════════════════════
 class _Ring:
     """Lock-free power-of-two ring for int16 audio."""
+
     __slots__ = ("_buf", "_mask", "_head", "_tail", "_full", "_view")
 
     def __init__(self, cap: int) -> None:
@@ -96,7 +103,7 @@ class _Ring:
         if not n:
             return
         cap = self._view.shape[0]
-        if n >= cap:                                # keep only last cap samples
+        if n >= cap:                       # keep only the last <cap> samples
             self._view[:] = chunk[-cap:]
             self._head = self._tail = 0
             self._full = True
@@ -129,33 +136,31 @@ class _Ring:
     def size(self) -> int:
         return self._view.shape[0] if self._full else (self._head - self._tail) & self._mask
 
-# ═══════════════════════ Punctuation helper ════════════════════
+# ══════════════════════════════════ Punctuation map ═══════════════════════════
 class _Punct:
     _MAP = {
+        ("at", "sign"): "@",
+        ("dot",): ".",
+        ("comma",): ",",
+        ("colon",): ":",
+        ("semicolon",): ";",
+        ("question", "mark"): "?",
+        ("exclamation", "point"): "!",
+        ("exclamation", "mark"): "!",
+        ("dash",): "-",
+        ("hyphen",): "-",
+        ("slash",): "/",
         ("open", "parenthesis"): "(",
         ("close", "parenthesis"): ")",
         ("open", "bracket"): "[",
         ("close", "bracket"): "]",
         ("open", "brace"): "{",
         ("close", "brace"): "}",
-        ("question", "mark"): "?",
-        ("exclamation", "point"): "!",
-        ("exclamation", "mark"): "!",
         ("dollar", "sign"): "$",
         ("percent", "sign"): "%",
-        ("at", "sign"): "@",
         ("hash", "tag"): "#",
         ("pound", "sign"): "#",
-        ("comma",): ",",
-        ("period",): ".",
-        ("dot",): ".",
-        ("colon",): ":",
-        ("semicolon",): ";",
-        ("dash",): "-",
-        ("hyphen",): "-",
-        ("slash",): "/",
     }
-    _EMAIL = re.compile(r"\b(\w[\w.-]+)\s+at\s+(\w[\w.-]+)\s+dot\s+com\b", re.I)
 
     def __init__(self) -> None:
         self._patterns = [
@@ -172,10 +177,9 @@ class _Punct:
             out = pat.sub(rep, out)
         out = self._spc_before.sub(r"\1", out)
         out = self._spc_after.sub(r"\1", out)
-        out = self._EMAIL.sub(r"\1@\2.com", out)
         return out.strip()
 
-# ═══════════════════════ Thread-safe context ═══════════════════
+# ═════════════════════════ Thread-safe context ════════════════════════════════
 class _Context:
     """Rolling prompt history (mutex-guarded)."""
 
@@ -193,10 +197,8 @@ class _Context:
         with self._lock:
             return " ".join(self._buf) + ". " if self._buf else ""
 
-# ═══════════════════════ Adaptive batch control ════════════════
+# ═══════════════════ Adaptive batch controller ════════════════════════════════
 class _BatchCtl:
-    """Learns ideal batch size during first ~2 s of audio."""
-
     def __init__(self, cfg: Config) -> None:
         self.min_samples = cfg.batch_min_samples
         self.max_chunks = cfg.batch_max_chunks
@@ -208,7 +210,7 @@ class _BatchCtl:
             return
         self._seen += samples
         self._chunks += 1
-        if self._seen >= 32_000:                         # after ~2 s @ 16 kHz
+        if self._seen >= 32_000:  # ~2 s @16 kHz
             avg = self._seen // self._chunks
             self.min_samples = max(8_000, min(int(avg * 0.8) // 16 * 16, 24_000))
             self.max_chunks = max(4, min(ceil(self.min_samples / avg), 10))
@@ -216,32 +218,40 @@ class _BatchCtl:
                         self.min_samples, self.max_chunks)
             self._lock = True
 
-# ═══════════════════════ Clipboard wrapper ═════════════════════
+# ═════════════════════ Clipboard wrapper class ════════════════════════════════
 class _Clipboard:
-    """Cross-platform clipboard with dedup + fast Win path."""
+    """Thread-pool clipboard copy; never blocks event loop."""
 
     def __init__(self) -> None:
         self._last = ("", 0.0)
+        self._pool = ThreadPoolExecutor(max_workers=1)
 
-    def copy(self, text: str) -> None:
+    def _sync_copy(self, text: str) -> None:
+        if sys.platform == "win32" and _wc:
+            _fast_win_clip(text)
+        else:
+            pyperclip.copy(text)
+
+    async def copy(self, text: str) -> None:
         txt, ts = self._last
         if text == txt and (time.time() - ts) < 0.1:
             return
+        loop = asyncio.get_running_loop()
         try:
-            if sys.platform == "win32" and _wc:
-                _fast_win_clip(text)
-            else:
-                pyperclip.copy(text)
+            await loop.run_in_executor(self._pool, self._sync_copy, text)
         except Exception as exc:
             LOGGER.warning("Clipboard fast-path failed: %s – fallback", exc)
-            pyperclip.copy(text)
+            await loop.run_in_executor(self._pool, pyperclip.copy, text)
         self._last = (text, time.time())
 
-# ═══════════════════════ Main Engine ═══════════════════════════
-class DictationEngine:  # noqa: WPS230
-    """Mic → (VAD) → Whisper → clipboard."""
+# ══════════════════════════ Dictation Engine ══════════════════════════════════
+class DictationEngine:
+    """Microphone → (VAD) → Whisper → clipboard."""
 
-    # ─────────────── init ───────────────
+    _EMAIL_RE = re.compile(r"\b([\w.-]+)\s+at\s+([\w.-]+)\s+dot\s+com\b", re.I)
+    _URL_DOT = re.compile(r"\b([a-zA-Z0-9_-]+)\s+\.\s+([a-zA-Z0-9_-]+)")
+
+    # ───────────────────────── init ──────────────────────────
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         cap = int(cfg.sample_rate * cfg.max_buffer_seconds * 2)
@@ -252,7 +262,7 @@ class DictationEngine:  # noqa: WPS230
         self._model: WhisperModel | None = None
         self._recording = asyncio.Event()
         self._terminate = asyncio.Event()
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         self._clip = _Clipboard()
         self._clip_q: asyncio.Queue[str | None] = asyncio.Queue(maxsize=10)
@@ -260,25 +270,23 @@ class DictationEngine:  # noqa: WPS230
         self._ctx = _Context()
         self._batch_ctl = _BatchCtl(cfg)
 
-        # Trigger state
-        self._mouse_listener: mouse.Listener | None = None
-        self._mouse_press: float | None = None
-        self._hold_timer: threading.Timer | None = None
+        # triggers
+        self._mouse_listener: Optional[mouse.Listener] = None
+        self._mouse_press: Optional[float] = None
+        self._hold_timer: Optional[threading.Timer] = None
         self._holding = False
-        self._pending = ""
 
-        # VAD shadow / cache
+        # shadow buffer
         self._raw_shadow: Deque[np.ndarray] = (
             deque()
             if cfg.mouse_hold_to_record
             else deque(maxlen=int(cfg.max_buffer_seconds * 1000 / cfg.chunk_ms))
         )
-        self._vad_gate: VADGate | None = None
+        self._vad_gate: Optional[VADGate] = None
 
-        # RMS caching
         self._rms: dict[Tuple[int, int, int, int], int] = {}
 
-    # ─────────── GPU tuning ───────────
+    # ──────────────────── GPU tuning ─────────────────────────
     def _tune_cuda(self) -> None:
         if self.cfg.device != "cuda" or not torch.cuda.is_available():
             return
@@ -286,22 +294,15 @@ class DictationEngine:  # noqa: WPS230
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
             maj, min_ = torch.cuda.get_device_capability()
-            tMaj, tMin = map(int, torch.__version__.split("+")[0].split(".")[:2])
-            if (maj, min_) >= (8, 0) and (tMaj, tMin) >= (2, 0):
+            tmaj, tmin = map(int, torch.__version__.split("+")[0].split(".")[:2])
+            if (maj, min_) >= (8, 0) and (tmaj, tmin) >= (2, 0):
                 if hasattr(torch.backends.cuda, "enable_flash_sdp"):
                     torch.backends.cuda.enable_flash_sdp(True)
-                    LOGGER.info("Flash-Attention backend enabled")
+                    LOGGER.info("Flash-Attention enabled")
         except Exception as exc:
-            LOGGER.debug("CUDA tuning skipped: %s", exc, exc_info=True)
+            LOGGER.debug("CUDA tuning skipped: %s", exc)
 
-    # ─────────── ring grow helper ───────────
-    def _ensure_ring_cap(self, needed: int) -> None:
-        if self._ring and needed > self._ring._buf.size:
-            new_cap = 1 << (needed * 2 - 1).bit_length()
-            LOGGER.debug("Growing ring to %d samples", new_cap)
-            self._ring = _Ring(new_cap)
-
-    # ─────────── model load ───────────
+    # ──────────────────── model load ─────────────────────────
     async def _load_model(self) -> None:
         if self.cfg.compute_type == "auto":
             ct = "float16" if self.cfg.device == "cuda" else "float32"
@@ -322,8 +323,6 @@ class DictationEngine:  # noqa: WPS230
             self._model = await asyncio.get_running_loop().run_in_executor(None, _sync)
 
         self._tune_cuda()
-
-        # Warm-up two sizes
         for n in (8_000, 16_000):
             dummy = np.random.randint(-500, 500, n, np.int16)
             try:
@@ -332,19 +331,19 @@ class DictationEngine:  # noqa: WPS230
                 pass
         LOGGER.info("Model ready ✔")
 
-    # ─────────── clipboard worker ───────────
+    # ──────────────────── clipboard worker ───────────────────
     async def _clip_worker(self) -> None:
         while True:
             txt = await self._clip_q.get()
             if txt is None:
                 break
-            self._clip.copy(txt)
+            await self._clip.copy(txt)
             if self.cfg.auto_paste_on_release:
                 await asyncio.sleep(0.01)
                 _paste_retry()
             LOGGER.debug("📋 Sent")
 
-    # ─────────── transcription ───────────
+    # ──────────────────── transcription ──────────────────────
     async def _transcribe(self, audio: np.ndarray) -> str:
         if audio.ndim > 1:
             audio = audio.squeeze()
@@ -352,7 +351,7 @@ class DictationEngine:  # noqa: WPS230
         if n < 800:
             return ""
 
-        # Fast inline RMS for tiny clips
+        # soft RMS gate
         if n < 4_096:
             energy = int(np.square(audio, dtype=np.int32).sum(dtype=np.int64) // n)
             if energy < 8_000:
@@ -381,9 +380,9 @@ class DictationEngine:  # noqa: WPS230
                 self._f32[:n],
                 language=self.cfg.language,
                 initial_prompt=self.cfg.initial_prompt or self._ctx.prompt(),
-                beam_size=getattr(self.cfg, "beam_size", 1),
-                best_of=getattr(self.cfg, "best_of", 1),
-                temperature=getattr(self.cfg, "temperature", 0.0),
+                beam_size=self.cfg.beam_size,
+                best_of=self.cfg.best_of,
+                temperature=self.cfg.temperature,
                 vad_filter=True,
                 word_timestamps=False,
             )
@@ -391,9 +390,17 @@ class DictationEngine:  # noqa: WPS230
         txt = "".join(s.text for s in segs).strip()
         if txt and getattr(info, "avg_logprob", -1.0) > -0.6:
             self._ctx.push(txt)
+
+        # post-processing
+        txt = self._EMAIL_RE.sub(r"\1@\2.com", txt)
+        txt = self._URL_DOT.sub(r"\1.\2", txt)
         return txt
 
-    # ─────────── trigger handling ───────────
+    # ──────────────────── shadow helper ──────────────────────
+    def _add_to_shadow(self, chunk: np.ndarray) -> None:
+        self._raw_shadow.append(chunk)
+
+    # ──────────────────── trigger install ─────────────────────
     def _install_triggers(self) -> None:
         def ok() -> bool:
             return (
@@ -406,13 +413,13 @@ class DictationEngine:  # noqa: WPS230
                 return
             on = self._recording.is_set()
             (self._recording.clear() if on else self._recording.set())
-            LOGGER.info("%s (%s)", "⏸️  Paused" if on else "▶️  Recording…", src)
+            LOGGER.info("%s (%s)", "⏸️ Paused" if on else "▶️ Recording…", src)
 
         add_hotkey(self.cfg.hotkey, lambda: toggle("kbd"))
 
-        # Mouse
         if not self.cfg.enable_mouse_trigger:
             return
+
         btn = {
             "left": mouse.Button.left,
             "right": mouse.Button.right,
@@ -423,20 +430,19 @@ class DictationEngine:  # noqa: WPS230
         def click(_x: int, _y: int, button: mouse.Button, down: bool) -> None:
             if button is not btn:
                 return
-            if down:                                  # press
+            if down:
                 self._mouse_pressed = True
                 if self.cfg.mouse_hold_to_record:
-                    self._raw_shadow.clear()
+                    self._raw_shadow.clear()     # start fresh
                     self._mouse_press = time.time()
                     self._holding = False
-                    self._pending = ""
                     self._hold_timer = threading.Timer(
                         self.cfg.mouse_hold_threshold_seconds, self._hold_start
                     )
                     self._hold_timer.start()
                 else:
                     toggle("mouse")
-            else:                                     # release
+            else:
                 self._mouse_pressed = False
                 if self.cfg.mouse_hold_to_record:
                     self._hold_stop()
@@ -449,7 +455,7 @@ class DictationEngine:  # noqa: WPS230
     def _hold_start(self) -> None:
         self._holding = True
         self._recording.set()
-        LOGGER.info("▶️  Recording started (mouse hold)")
+        LOGGER.info("▶️ Recording started (mouse hold)")
 
     def _hold_stop(self) -> None:
         try:
@@ -457,7 +463,7 @@ class DictationEngine:  # noqa: WPS230
                 return
             self._recording.clear()
             self._holding = False
-            LOGGER.info("⏸️  Stopped (mouse release)")
+            LOGGER.info("⏸️ Stopped (mouse release)")
             fut = asyncio.run_coroutine_threadsafe(self._flush_hold(), self._loop)
             fut.add_done_callback(
                 lambda f: self._loop.call_soon_threadsafe(
@@ -469,7 +475,7 @@ class DictationEngine:  # noqa: WPS230
                 self._hold_timer.cancel()
             self._mouse_press = None
 
-    # ─────────── flushing helpers ───────────
+    # ──────────────────── flush helpers ───────────────────────
     async def _flush_hold(self) -> str:
         segs: list[np.ndarray] = []
         if self.cfg.use_vad:
@@ -489,10 +495,7 @@ class DictationEngine:  # noqa: WPS230
         txt = await self._transcribe(audio)
         return self._punct(txt) if txt else ""
 
-    def _add_to_shadow(self, chunk: np.ndarray) -> None:
-        self._raw_shadow.append(chunk)
-
-    # ─────────── main async loop ───────────
+    # ──────────────────── main loop ────────────────────────────
     async def _run(self) -> None:
         clip_task = asyncio.create_task(self._clip_worker())
 
@@ -521,9 +524,8 @@ class DictationEngine:  # noqa: WPS230
                 if not self._recording.is_set():
                     continue
 
-                # Back-pressure if clipboard congested
                 if self._clip_q.qsize() > 8:
-                    await asyncio.sleep(0.02)
+                    await asyncio.sleep(0.02)   # back-pressure clipboard
 
                 if self.cfg.use_vad:
                     if chunk.size:
@@ -544,7 +546,6 @@ class DictationEngine:  # noqa: WPS230
                             if not self._holding:
                                 self._raw_shadow.clear()
                 else:
-                    # ring path
                     self._ensure_ring_cap(
                         self.cfg.max_buffer_seconds * self.cfg.sample_rate * 2
                     )
@@ -560,7 +561,6 @@ class DictationEngine:  # noqa: WPS230
                 if self._terminate.is_set():
                     break
 
-            # tail flush
             if batch:
                 audio = concatenate(batch) if len(batch) > 1 else batch[0]
                 txt = await self._transcribe(audio)
@@ -570,7 +570,14 @@ class DictationEngine:  # noqa: WPS230
         await self._clip_q.put(None)
         await clip_task
 
-    # ─────────── public API ───────────
+    # ──────────────────── ring growth helper ──────────────────
+    def _ensure_ring_cap(self, needed: int) -> None:
+        if self._ring and needed > self._ring._buf.size:
+            new_cap = 1 << (needed * 2 - 1).bit_length()
+            LOGGER.debug("Growing ring to %d samples", new_cap)
+            self._ring = _Ring(new_cap)
+
+    # ──────────────────── public API ───────────────────────────
     async def start(self) -> None:
         await self._load_model()
         self._install_triggers()
