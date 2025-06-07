@@ -6,6 +6,20 @@ license = "MIT"
 requires-python = "==3.10.*"
 dynamic = ["version"]
 
+dependencies = [
+    "numpy",
+    "pyperclip",
+    "torch",
+    "faster-whisper==1.1.1",
+    "keyboard",
+    "pynput",
+    "sounddevice",
+    "webrtcvad",
+    'pydantic',
+    'pydantic-settings',
+    'pywin32; sys_platform == "win32"',
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

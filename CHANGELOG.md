@@ -30,6 +30,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 - Defaulted to GPU-first configuration.  
 - Met sub-800 ms transcription target.
 
+## [1.2.0] – 2025-06-08
+
+### Added
+* **Mouse-hold long-dictation support** – unlimited shadow buffer captures up to `max_buffer_seconds` (now 60 s by default).  
+* **Name/e-mail accuracy helpers**  
+  * Regex post-processor converts "_foo at bar dot com_" → `foo@bar.com`.  
+  * `initial_prompt` is now honoured continuously for rare names (e.g. *McKenzie*).  
+* **Punctuation map** accepts "at sign" & "dot" for `@` / `.`.  
+* Config default `max_buffer_seconds` raised to **60 s**.
+
+### Changed
+* **BREAKING** – removed experimental sample-counter shadow logic  
+  * Deleted `self._shadow_samples` & `self._shadow_cap`.  
+  * `_add_to_shadow` is now a single `deque.append`.  
+* Mouse-hold path resets shadow only at start/end of a hold; streaming mode still clears after every VAD flush.  
+* Clipboard retry now uses a single thread-pool executor for robustness.
+
+### Fixed
+* 10 s truncation bug when devices delivered jumbo audio chunks.  
+* Rare "deque mutated during iteration" race removed by dropping bounded-deque logic.  
+* Correctly clears shadow buffer counter in streaming VAD path.
+
+### Performance
+* Simplified shadow handling saves ~3 µs per chunk and ~0.5 MB RAM.  
+* No impact on Whisper logits – acoustic fidelity unchanged.
+
 ---
 
 ## [1.1.0] – 2025-06-07

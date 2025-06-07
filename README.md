@@ -69,11 +69,11 @@ Speak and watch the RMS in logs — target **‑25 dBFS to ‑15 dBFS**.
 python -m dictation_tool --model large-v3 --auto-paste --mic-gain <your_gain> --vad-aggr 2
 ```
 
-Requires a mid‑tier GPU (RTX 30‑series+) and adds \~1‑2 s initial latency.
+Expect interface latency ≈ 200 – 500 ms ( test card RTX3080), typically shrinking as the segment grows. The engine is tuned for dictation bursts of 20–30 s; beyond that it automatically finalises and starts a new segment.
 
 ### 💨 Option B — Maximum speed (with prompt tricks)
 
-Use the lightweight `medium.en` model and regain accuracy via prompts.
+Use the lightweight medium.en model for ≈ 5 – 20 ms interface latency (after the first token) and still‑robust accuracy. Like the large model, it is optimised for speech chunks 20–30 s before rolling over.  Prompt engineering can reclaim most of the large‑model accuracy when tuned.
 
 *Preset examples*
 
