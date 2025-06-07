@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -254,7 +255,9 @@ class DictationEngine:
             segs, info = await asyncio.to_thread(
                 self._model.transcribe, audio_f32, language=self.cfg.language,
                 initial_prompt=self.cfg.initial_prompt or self._ctx.prompt(),
-                beam_size=1, best_of=1, vad_filter=True, word_timestamps=False,
+                beam_size=self.cfg.beam_size,
+                best_of=max(self.cfg.beam_size, 5) if self.cfg.beam_size > 1 else 1,
+                vad_filter=True, word_timestamps=False,
             )
         text = "".join(s.text for s in segs).strip()
         if text and getattr(info, 'avg_logprob', -1.0) < -0.8: self._ctx.update(text)
@@ -262,19 +265,29 @@ class DictationEngine:
 
     _PUNCT_MAP: Final = {
         "dot": ".", "period": ".", "comma": ",", "colon": ":", "semicolon": ";", "dash": "-",
-        "hyphen": "-", "question mark": "?", "exclamation mark": "!", "exclamation point": "!",
-        "at sign": "@", "dollar sign": "$", "percent sign": "%", "hashtag": "#",
+        "hyphen": "-", "question mark": "?", "exclamation mark": "!", "exclamation point": "!", "at sign": "@", 
+        "dollar sign": "$", "percent sign": "%", "hashtag": "#",
         "open parenthesis": "(", "close parenthesis": ")", "open bracket": "[", "close bracket": "]",
-        "open brace": "{", "close brace": "}", "slash": "/",
+        "open brace": "{", "close brace": "}", "slash": "/"
     }
 
-    def _dispatch_text(self, txt: str, hold_flush: bool = False, is_intermediate: bool = False) -> None:
-        if not txt: return
+    def _post_process_text(self, txt: str) -> str:
+        """Applies punctuation replacements and other formatting rules."""
+        if not txt: return ""
         words = txt.split()
         for i, w in enumerate(words):
             if (rep := self._PUNCT_MAP.get(w.rstrip(".,?!").lower())):
                 words[i] = rep.capitalize() if w[0].isupper() else rep
-        clean = " ".join(words)
+        processed = " ".join(words)
+
+        # Fix URL and path spacing (e.g., "www . google . com" -> "www.google.com")
+        processed = re.sub(r'\s*([.。\\/])\s*', r'\1', processed)
+        
+        return processed
+
+    def _dispatch_text(self, txt: str, hold_flush: bool = False, is_intermediate: bool = False) -> None:
+        if not txt: return
+        clean = self._post_process_text(txt)
 
         log_icon = "💬" if is_intermediate else "📝"
         LOGGER.info("%s %s", log_icon, clean)
@@ -329,6 +342,25 @@ class DictationEngine:
             self._recording.set(); LOGGER.info("🎙️  Recording active")
         else: LOGGER.info("🎙️  Engine ready – hold mouse to record")
         self._main_loop = asyncio.get_running_loop(); await self._run()
+
+    async def run_benchmark(self):
+        """Runs a simple latency benchmark."""
+        if not self._model:
+            LOGGER.error("Model not loaded, cannot run benchmark.")
+            return
+
+        LOGGER.info("Running latency benchmark...")
+        dummy_audio = np.zeros(self.cfg.sample_rate * 2, dtype=np.int16)
+        
+        start_time = time.perf_counter()
+        await self._transcribe(dummy_audio)
+        end_to_end_latency = (time.perf_counter() - start_time) * 1000
+        
+        LOGGER.info(f"BENCHMARK RESULT: End-to-end latency: {end_to_end_latency:.2f} ms")
+        if end_to_end_latency > 800:
+            LOGGER.warning(f"Latency ({end_to_end_latency:.2f} ms) exceeds 800 ms target.")
+        else:
+            LOGGER.info("Latency is within the 800 ms target. ✓")
 
     def stop(self) -> None:
         self._terminate.set()

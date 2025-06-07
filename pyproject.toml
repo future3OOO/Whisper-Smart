@@ -3,24 +3,8 @@ name = "dictation-tool"
 description = "Fast real-time dictation with Whisper large-v3"
 authors = [{name = "Your Name"}]
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = "==3.10.*"
 dynamic = ["version"]
-dependencies = [
-    "torch==2.5.1+cu121",
-    "torchaudio==2.5.1+cu121",
-    "torchvision==0.20.1+cu121",
-    "faster-whisper==1.1.1",
-    "sounddevice>=0.4.6",
-    "soundfile>=0.12.1",
-    "numpy>=1.23.5",
-    "webrtcvad>=2.0.10",
-    "keyboard>=0.13.5",
-    "mouse>=0.7.1",
-    "pyperclip",
-    "pyautogui",
-    "onnxruntime>=1.16.0",
-    "ctranslate2",
-]
 
 [build-system]
 requires = ["hatchling"]

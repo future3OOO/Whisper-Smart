@@ -193,11 +193,9 @@ tasks/
 project/
 scripts/
 tasks/
-tests/
 .hypothesis/
 htmlcov/
 .coverage
-.coverage.*
 .env.example
 .roomodes
 .taskmasterconfig

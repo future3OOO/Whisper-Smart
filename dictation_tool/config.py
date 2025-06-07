@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Sequence, Union
 
@@ -27,6 +27,9 @@ class Config:
     model_name: str = "large-v3"
     compute_type: ComputeType = "auto"
     device: str = "cuda"                           # "cuda" | "cpu"
+    beam_size: int = 5
+    language: str | None = None
+    initial_prompt: str | None = None
 
     # Audio / runtime
     sample_rate: int = 16_000
@@ -67,12 +70,6 @@ class Config:
     # GPU Performance Optimization
     torch_compile_mode: TorchCompileMode = "off" # Safer default
     attention_backend: AttentionBackend = "flash"
-
-    # Transcription hints - Hard-enforce English
-    language: str | None = None
-    # For a list of Whisper model initial prompts, see:
-    # https://github.com/openai/whisper/blob/main/whisper/prompting.py
-    initial_prompt: str = ""
 
     # Misc
     log_dir: Path = Path.home() / ".dictation_tool" / "logs"

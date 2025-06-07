@@ -1,40 +1,50 @@
 # Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to **dictation-tool** are recorded in this file.  
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and the project adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
 ### Added
-- GPU smoke tests for CUDA functionality validation
-- Comprehensive latency benchmarking script with memory tracking
-- Input device selection via `--input-device` flag
-- Microphone gain control via `--mic-gain` flag
-- `clamp_tokens()` utility for reasoning token budget management
-- CUDA availability guard at startup
-- Safe audio gain scaling with clipping to prevent overflow
+- **GPU smoke tests** – verify CUDA availability at startup.  
+- **Comprehensive latency script** – track wall-time and memory.  
+- **Input device selection** – `--input-device`.  
+- **Microphone gain control** – `--mic-gain` with safe clipping.  
+- **Token-budget utility** – `clamp_tokens()` for reasoning prompts.  
+- **CUDA guard** – exit early when no GPU detected.
 
 ### Changed
-- **BREAKING**: Unified attention backend configuration into single `--attention-backend` enum (none, flash, mem-eff)
-- **BREAKING**: Removed legacy `--no-flash` and `--no-mem-efficient` flags
-- Improved clipboard operations with retry wrapper for reliability
-- Enhanced retry logic with proper temperature slicing and avg_logprob validation
-- Audio gain processing now uses safe int16 clipping
-- Test timeouts added for GPU operations
-- Version bumped to 1.1.0-dev
+- **BREAKING** – unified attention backend: `--attention-backend {none,flash,mem-eff}`; removed `--no-flash` and `--no-mem-efficient`.  
+- Upgraded clipboard operations with retry wrapper.  
+- Improved retry logic (temperature slicing, `avg_logprob` validation).  
+- Refactored audio-gain code to use int16 clipping.  
+- Added GPU test timeouts.
 
 ### Fixed
-- GPU optimization model compilation now accepts kwargs correctly
-- Memory-efficient attention backend selection
-- Retry temperature enforcement respects max_retries limit
-- Audio input device selection and gain application
+- Passed kwargs correctly to GPU optimisation compiler.  
+- Resolved memory-efficient attention selection edge-case.  
+- Enforced `max_retries` limit in retry logic.  
+- Applied input-device selection and gain consistently.
 
 ### Performance
-- 5-10% latency improvement from architectural optimizations
-- GPU-first configuration defaults
-- Sub-800ms transcription target compliance
+- Achieved 5–10 % latency reduction through architectural tweaks.  
+- Defaulted to GPU-first configuration.  
+- Met sub-800 ms transcription target.
 
-## [1.0.0] - Previous Release
-- Initial production release with basic dictation functionality
+---
+
+## [1.1.0] – 2025-06-07
+
+### Added
+- **Configurable accuracy** – `--beam-size` for quality vs speed.  
+- **Advanced prompting** – `--preset` and `--initial-prompt` for style and vocabulary control.  
+- **Smart text post-processing** – fixes spacing in URLs/paths (e.g. `www . google . com` → `www.google.com`).  
+- **On-demand latency benchmarking** – `--bench` flag.
+
+### Fixed
+- Corrected mutable default for `prompt_terms` in `Config`.  
+- Ensured `engine.stop()` executes on exit.  
+- Made benchmark run safely inside existing asyncio loop.
+
+## [1.0.0] – 2025-06-06
+### Added
+- Initial production release providing baseline dictation functionality.

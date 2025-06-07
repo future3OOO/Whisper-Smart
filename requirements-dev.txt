@@ -1,0 +1,12 @@
+# Dev / QA tool-chain
+pytest
+pytest-cov
+pytest-xdist
+pytest-asyncio
+pytest-timeout
+hypothesis
+hyperfine
+black
+ruff
+mypy
+psutil 
