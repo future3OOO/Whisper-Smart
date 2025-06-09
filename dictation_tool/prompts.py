@@ -1,26 +1,63 @@
 # dictation_tool/prompts.py
+# ---------------------------------------------------------------------------
+# High-level “initial_prompt” snippets injected into Whisper to bias spelling,
+# e-mail formatting, technical terms, etc.  The {terms} placeholder lets the
+# CLI / GUI pass extra vocabulary at runtime – but every preset already lists
+# sane defaults so you can call them verbatim.
+# ---------------------------------------------------------------------------
 
-PRESETS = {
+PRESETS: dict[str, tuple[str, str]] = {
+    # ──────────────────────────────────────────────────────────────────────
     "business": (
-        "This is professional business dictation with terms like {terms}. Please use proper formatting.",
-        "Q4,spreadsheet,project coordination,stakeholders"
+        "You are transcribing professional business dictation.  "
+        "Spelling and punctuation must be perfect.  Vocabulary includes: {terms}.",
+        "Q4,spreadsheet,project coordination,stakeholders",
     ),
+    # ──────────────────────────────────────────────────────────────────────
     "programming": (
-        "This is technical programming dictation with terms like {terms}. Please use proper formatting.",
-        "DataFrame,pandas,numpy,microservices,API,SSL"
+        "You are transcribing technical programming dictation.  "
+        "Code identifiers and library names must be preserved verbatim.  "
+        "Vocabulary includes: {terms}.",
+        "DataFrame,pandas,numpy,microservices,API,SSL",
     ),
+    # ──────────────────────────────────────────────────────────────────────
     "file-ops": (
-        "This is computer file management with terms like {terms}. Please use proper formatting.",
-        "Project_Files,report.pdf,Adobe Reader,C-drive"
+        "You are transcribing speech about computer file management.  "
+        "Paths and filenames must be exact.  Vocabulary includes: {terms}.",
+        "Project_Files,report.pdf,Adobe Reader,C-drive",
     ),
+    # ──────────────────────────────────────────────────────────────────────
     "tech": (
-        "This is a technical discussion about software architecture with terms like {terms}.",
-        "microservices,SSL encryption,staging environment,deployment"
+        "You are transcribing a technical discussion on software architecture.  "
+        "Maintain precise terminology.  Vocabulary includes: {terms}.",
+        "microservices,SSL encryption,staging environment,deployment",
     ),
+    # ──────────────────────────────────────────────────────────────────────
     "general": (
-        # This is the new, optimized prompt for web, search, and email.
-        # Note: The {terms} placeholder is still here for consistency, but we provide the terms directly.
-        "This is a high-quality dictation for web browsing, search queries, and professional emails. It includes terms like {terms}. Please use correct capitalization and punctuation.",
-        "www,.com,@,Google,search for,send an email to,subject line,John Smith"
+        # ⭐ Generic web-search + short e-mail dictation preset
+        "You are transcribing high-quality everyday dictation for web searches and "
+        "short professional e-mails.  Convert phrases such as “at sign” or “at symbol” "
+        "to “@”, “dot” to “.”, and remove spaces inside URLs and e-mail addresses.  "
+        "Capitalise the first word of each sentence.  Insert a single line break when "
+        "the speaker says “new line” and a blank line (two line breaks) when the "
+        "speaker says “new paragraph”.  Vocabulary includes: {terms}.",
+        "www,.com,@,Google,search for,send an email to,subject line,John Smith",
     ),
-} 
+    # ──────────────────────────────────────────────────────────────────────
+    "email": (
+        # ⭐ Fully-optimised long-form e-mail preset
+        "Transcribe a formal e-mail **and apply the following commands instead of "
+        "writing them literally**:\n"
+        "• “at sign”, “at symbol” → @\n"
+        "• “dot”, “period”         → .\n"
+        "• “new line”, “line break”      → ⏎ (single newline)\n"
+        "• “new paragraph”                → ⏎⏎ (blank line)\n"
+        "• “bullet point”                 → ⏎•  (bullet + space)\n"
+        "Strip every space that occurs immediately before or after “@” or “.” "
+        "inside addresses and URLs. Never output any quotation marks the speaker "
+        "uses to indicate a command. Capitalise the first word of each sentence "
+        "and use correct punctuation. Vocabulary: {terms}.",
+        "Dear,Hi team,Kind regards,Best regards,McKenzie,@,gmail.com,cc,bcc",
+    ),
+
+}

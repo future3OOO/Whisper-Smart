@@ -168,8 +168,9 @@ class _Punct:
             for k, v in self._MAP.items()
         ]
         self._patterns.sort(key=lambda kv: -kv[0].pattern.count(r"\s"))
-        self._spc_before = re.compile(r"\s+([,.:;?!()[\]{}])")
-        self._spc_after = re.compile(r"([(\[{])\s+")
+        # keep line-feeds intact; collapse only spaces/tabs
+        self._spc_before = re.compile(r"[ \t]+([,.:;?!()[\]{}])")
+        self._spc_after = re.compile(r"([(\[{])[ \t]+")
 
     def __call__(self, text: str) -> str:
         out = text
@@ -244,11 +245,32 @@ class _Clipboard:
             await loop.run_in_executor(self._pool, pyperclip.copy, text)
         self._last = (text, time.time())
 
+# ───────────────────────── command cleanup ──────────────────────────
+_CMD_SUBS: tuple[tuple[re.Pattern, str], ...] = (
+    # single line break  – eat optional punctuation / spaces after the cue
+    (re.compile(r"\b(?:new\s+line|line\s*break|newline)\b[ \t]*[.,!?;:]?[ \t]*",
+                re.I), "\n"),
+    # blank line (paragraph) – same idea, but keep the double LF
+    (re.compile(r"\bnew\s+paragraph\b[ \t]*[.,!?;:]?[ \t]*", re.I), "\n\n"),
+    (re.compile(r"\bbullet\s+point\b", re.I), "\n• "),
+    # strip runs of smart quotes, plain quote, back-tick, or � (U+FFFD)
+    (re.compile(r'[\u201C\u201D"`\uFFFD]+'), ""),
+)
+
+_SPACES_AROUND_DOT_AT = re.compile(r"[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]*([@.])[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]*")
+
+_SIGNOFFS = ("kind regards", "best regards", "regards", "cheers")
+SIGNOFF_PAT = re.compile(
+    r"(^|\n)(%s)\b[,.\s]*" % "|".join(_SIGNOFFS),
+    re.I,
+)
+
 # ══════════════════════════ Dictation Engine ══════════════════════════════════
 class DictationEngine:
     """Microphone → (VAD) → Whisper → clipboard."""
 
-    _EMAIL_RE = re.compile(r"\b([\w.-]+)\s+at\s+([\w.-]+)\s+dot\s+com\b", re.I)
+    _EMAIL_RE = re.compile(r"\b([\w.-]+)\s+at(?:\s+sign)?\s+([\w.-]+)\s+dot\s+com\b",
+                          re.I)
     _URL_DOT = re.compile(r"\b([a-zA-Z0-9_-]+)\s+\.\s+([a-zA-Z0-9_-]+)")
 
     # ───────────────────────── init ──────────────────────────
@@ -391,9 +413,41 @@ class DictationEngine:
         if txt and getattr(info, "avg_logprob", -1.0) > -0.6:
             self._ctx.push(txt)
 
-        # post-processing
-        txt = self._EMAIL_RE.sub(r"\1@\2.com", txt)
-        txt = self._URL_DOT.sub(r"\1.\2", txt)
+        # deterministic clean-ups -------------------------------------------------
+        txt = self._EMAIL_RE.sub(r"\1@\2.com", self._URL_DOT.sub(r"\1.\2", txt))
+        for pat, rep in _CMD_SUBS:
+            txt = pat.sub(rep, txt)
+        
+        # ── NEW: collapse duplicate commas (word "comma" + real comma) ─────────
+        txt = re.sub(r',\s*,+', ',', txt)
+        
+        # ── NEW: if a comma sneaks in *before* the paragraph break, make it a '.' ─
+        txt = re.sub(r',\s*\n\n', '.\n\n', txt)
+        
+        # ── NEW: add full stop before paragraph break when *no* punctuation spoken ─
+        txt = re.sub(r'([^\s.,!?;:])\s*\n\n', r'\1.\n\n', txt)
+        
+        # final space trim around @ and .
+        txt = _SPACES_AROUND_DOT_AT.sub(r'\1', txt)
+        
+        # safety-pass: remove spaces or tabs (NOT new-lines) that may survive
+        txt = re.sub(r'@[ \t]+', '@', txt)   # john @ gmail → john@gmail
+        txt = re.sub(r'\.[ \t]+', '.', txt)  # gmail . com  → gmail.com
+        
+        # -------------------------------------------------------------------------
+        # 8. sentence-/signature-polish  (run *after* all previous tweaks)
+        # -------------------------------------------------------------------------
+        
+        # 8-a  normalise common e-mail sign-offs
+        txt = SIGNOFF_PAT.sub(lambda m: f"{m.group(1)}{m.group(2).title()},\n", txt)
+        
+        # 8-b  capitalise first alphabetical char of every logical line
+        txt = re.sub(
+            r"(^|\n)([• \t]*)([a-z])",
+            lambda m: m.group(1) + m.group(2) + m.group(3).upper(),
+            txt,
+        )
+        
         return txt
 
     # ──────────────────── shadow helper ──────────────────────
