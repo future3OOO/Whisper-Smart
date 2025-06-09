@@ -1,11 +1,11 @@
-# 📝 Dictation-Tool — Faster-Whisper CLI
+# 📝 Whisper-Smart — Faster-Whisper CLI
 
 > **Hold your mouse button, speak, release, and watch text materialise wherever your cursor is.**
 
 A lightning-fast desktop dictation utility for **Windows 10/11** (Linux & macOS untested) powered by [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) and accelerated by **Flash-Attention 2**.
 
 <p align="center">
-  <img src="docs/demo.gif" width="640" alt="Dictation-Tool hold-to-talk demo">
+  <img src="docs/demo.gif" width="640" alt="Whisper-Smart hold-to-talk demo">
 </p>
 
 ---
@@ -32,8 +32,8 @@ A lightning-fast desktop dictation utility for **Windows 10/11** (Linux & macOS 
 
 ```powershell
 # 1) Clone & enter the repo
-git clone https://github.com/yourname/dictation-tool.git
-cd dictation-tool
+git clone https://github.com/future3OOO/Whisper-Smart.git
+cd Whisper-Smart
 
 # 2) Create / activate a virtual env
 python -m venv .venv
