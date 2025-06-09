@@ -265,6 +265,11 @@ SIGNOFF_PAT = re.compile(
     re.I,
 )
 
+# Greeting lines that should end with a comma before a blank line
+_GREETING_BREAK = re.compile(
+    r'(?i)(^|\n)(\s*(?:hi|hello|hey|kia(?:\s+ora)?|dear)\b[^\n]*?)\s*\n\n'
+)
+
 # ══════════════════════════ Dictation Engine ══════════════════════════════════
 class DictationEngine:
     """Microphone → (VAD) → Whisper → clipboard."""
@@ -423,6 +428,12 @@ class DictationEngine:
         
         # ── NEW: if a comma sneaks in *before* the paragraph break, make it a '.' ─
         txt = re.sub(r',\s*\n\n', '.\n\n', txt)
+        
+        # ── turn greeting + blank line into "Greeting,<LF><LF>"
+        txt = _GREETING_BREAK.sub(
+            lambda m: f"{m.group(1)}{m.group(2).rstrip(' ,.!?;:')},\n\n",
+            txt,
+        )
         
         # ── NEW: add full stop before paragraph break when *no* punctuation spoken ─
         txt = re.sub(r'([^\s.,!?;:])\s*\n\n', r'\1.\n\n', txt)
