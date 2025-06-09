@@ -14,12 +14,12 @@ A lightning-fast desktop dictation utility for **Windows 10/11** (Linux & macOS 
 
 |                              |                                                                                               |
 | ---------------------------- | --------------------------------------------------------------------------------------------- |
-| **Instant hold-to-record**   | Press a mouse button (configurable, default = right) for ≥ 0.2  s, speak, release to paste.   |
-| **Ultra-low latency**        | CUDA 12 + Flash-Attention 2 kernels & zero-copy audio pipeline.                               |
-| **Smart VAD**                | Real-time segmentation with tolerant fallback to avoid truncation.                            |
+| **Instant hold-to-record**   | Press the chosen mouse button (default = right) for ≥ 0.2 s, speak, release to paste.         |
+| **Ultra-low latency**        | CUDA 12 + Flash-Attention 2 kernels & zero-copy audio pipeline.                                |
+| **Smart VAD**                | Real-time segmentation with tolerant fallback—no lost syllables.                              |
 | **Context memory**           | Remembers recent sentences for better proper-noun accuracy.                                   |
 | **Clipboard modes**          | Auto-paste, copy-only, or clipboard-off.                                                      |
-| **CLI everything**           | 25 + flags: mic gain, device, model size, beam width, VAD aggressiveness, etc.                |
+| **CLI everything**           | 25 + flags: mic gain, device, model size, beam width, VAD aggressiveness …                    |
 
 ---
 
@@ -48,18 +48,18 @@ Developer tooling (pytest, ruff, etc.) lives in requirements-dev.txt.
 
 ## 🚀 Quick start & mic tuning
 
-Tune microphone gain – start verbose and watch RMS levels:
+### 1 Tune microphone gain
 
 ```powershell
 python -m dictation_tool -v --auto-paste --mic-gain 2.5
 ```
 
-Target -25 dBFS to -15 dBFS.
---mic-gain ↑ / ↓ until the verbose RMS falls inside that window.
+In verbose logs aim for **-25 dBFS … -15 dBFS**  
+ • Raise `--mic-gain` if RMS ≈ -35 dBFS  • Lower if RMS ≈ -5 dBFS
 
-## Choose a performance mode
+### 2 Choose a performance mode
 
-### 🎯 Option A — Maximum accuracy (large-v3)
+#### 🎯 Option A — Maximum accuracy (large-v3)
 
 ```powershell
 python -m dictation_tool `
@@ -69,15 +69,14 @@ python -m dictation_tool `
        --vad-aggr 2
 ```
 
-Latency ≈ 200 - 500 ms on an RTX 3080.
-Engine is tuned for 20 - 30 s bursts; it rolls over automatically after that.
+Latency ≈ 200-500 ms on an RTX 3080. Designed for 20-30 s dictation bursts.
 
-### 💨 Option B — Maximum speed (medium.en + prompt tricks)
+#### 💨 Option B — Maximum speed (medium.en + prompt tricks)
 
-medium.en delivers ≈ 5 - 200 ms interface latency while staying surprisingly
+medium.en delivers ≈ 5-20 ms interface latency while staying surprisingly
 accurate when paired with a good prompt and a larger beam.
 
-## 📧 Fast e-mail workflow (preset email)
+## 📧 Fast e-mail workflow — preset **email**
 
 ```powershell
 python -m dictation_tool `
@@ -87,21 +86,47 @@ python -m dictation_tool `
        --auto-paste
 ```
 
-| Spoken micro-phone cue | Clipboard result |
-|------------------------|------------------|
-| Kia ora Steve new paragraph | Kia ora Steve. |
-| How's your day going comma I hope everything is well new paragraph | blank line → How's your day going, I hope everything is well. |
-| Please email john at sign gmail dot com new paragraph | Please email john@gmail.com. |
-| kind regards new line | Kind regards, |
-| john | John |
-| bullet point first item | • first item |
-| bullet point second item | • second item |
+<details>
+<summary>Example conversation ▶️</summary>
 
-✔ Converts at sign / dot com → @gmail.com  
-✔ Adds missing "full stop" before a blank line  
-✔ Normalises common sign-offs, capitalises next line
+```
+🎙️  SPOKEN
+-------------------------------------------
+hi Steve new paragraph
+how's your day going i hope everything is well new paragraph
+please email john@gmail.com new paragraph
+kind regards new line
+john
+bullet point first item
+bullet point second item
 
-## Other preset examples
+📋  CLIPBOARD
+-------------------------------------------
+Hi Steve,
+
+How's your day going? I hope everything is well.
+
+Please email john@gmail.com.
+
+Kind regards,
+John
+• first item
+• second item
+```
+
+</details>
+
+**What happened?**
+
+✔ Converts "at sign / dot com" → @gmail.com  
+
+✔ Inserts a comma after greeting, a full-stop before blank lines  
+
+✔ Normalises sign-offs & capitalises every new line  
+
+✔ Recognises bullet point cue (unicode bullet)
+
+## Other presets
 
 ```powershell
 # Business reports
@@ -121,25 +146,23 @@ python -m dictation_tool `
        --auto-paste
 ```
 
-Adds a small latency bump but improves word choice.
+Larger beam sizes (e.g. 6-8) are supported but add latency.
 
 ## 🛠 Common customisations
 
 | Goal | Flag | Example (PowerShell) |
 |------|------|---------------------|
-| Disable VAD for long monologues | --no-vad | ... --no-vad --max-buffer-seconds 30 |
-| Tolerate longer pauses | --vad-aggr | --vad-aggr 1 (0 =tolerant … 3 =strict) |
-| Copy without pasting | --manual-paste | ... --manual-paste |
-| Change mouse trigger | --mouse-btn | --mouse-btn middle |
-| Use hotkey only (no mouse) | --no-mouse | ... --no-mouse |
+| Disable VAD for long monologues | `--no-vad` | ... --no-vad --max-buffer-seconds 30 |
+| Tolerate longer pauses | `--vad-aggr` | --vad-aggr 1 (0 =tolerant … 3 =strict) |
+| Copy without pasting | `--manual-paste` | ... --manual-paste |
+| Change mouse trigger | `--mouse-btn` | --mouse-btn middle |
+| Use hotkey only (no mouse) | `--no-mouse` | ... --no-mouse |
 
-Run:
+Full flag list:
 
 ```powershell
 python -m dictation_tool --help
 ```
-
-for the full flag list.
 
 ## 🌳 Project layout
 
