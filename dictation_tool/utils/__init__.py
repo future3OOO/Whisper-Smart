@@ -2,10 +2,10 @@ import logging
 import random
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from time import perf_counter
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 T = TypeVar("T")
 
@@ -17,7 +17,7 @@ if not LOGGER.handlers:
         logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s", "%H:%M:%S")
     )
     LOGGER.addHandler(_HANDLER)
-    LOGGER.setLevel("INFO")          # default, overridden by -v / -q
+    LOGGER.setLevel("INFO")  # default, overridden by -v / -q
 
 
 @contextmanager
@@ -52,4 +52,4 @@ def clamp_tokens(msg: str, limit: int = 1000) -> str:
     """Clamp message length to keep reasoning tokens budget when used inside agents."""
     if len(msg) <= limit:
         return msg
-    return msg[:limit - 3] + "..."
+    return msg[: limit - 3] + "..."

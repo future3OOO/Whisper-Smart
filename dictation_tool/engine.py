@@ -1,10 +1,10 @@
 """
-dictation_tool.engine  –  v3.3-titan (2025-06-08)
+dictation_tool.engine - v3.3-titan (2025-06-08)
 
 Key features
 ────────────
 • Unlimited shadow buffer during mouse-hold (guarantees full 60 s capture)
-• Soft RMS gate (8 000) – keeps very quiet consonants
+• Soft RMS gate (8 000) - keeps very quiet consonants
 • Thread-pool clipboard copy, fast Win32 path + retry paste
 • Flash-SDP / TF-32 GPU tuning
 • Regex post-processor:
@@ -18,28 +18,32 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
-import logging
 import os
-import re
 import sys
 import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from math import ceil
-from typing import Deque, Tuple, Optional, Literal, Any
 
 import numpy as np
-import pyperclip
+import pyperclip  # type: ignore[import-untyped]
 import torch
-from faster_whisper import WhisperModel
-from keyboard import add_hotkey, is_pressed, send as kb_send
-from pynput import mouse
+from keyboard import add_hotkey, is_pressed  # type: ignore[import-untyped]
+from keyboard import send as kb_send
+from numpy.typing import NDArray
+from pynput import mouse  # type: ignore[import-untyped]
 
+from .benchmark import summarize_latency_ms, word_error_rate
 from .config import Config
-from .io import AudioStream, VADGate, concatenate
+from .io import AudioStream, Int16Audio, VADGate, concatenate
+from .postprocess import DictationPostProcessor
+from .transcription import FasterWhisperBackend, TranscriptionOptions
 from .utils import LOGGER, timed
 from .utils.profile import prof
+
+Float32Audio = NDArray[np.float32]
+Int32Audio = NDArray[np.int32]
 
 # ══════════════════════════════════ Clipboard helpers ═════════════════════════
 if sys.platform == "win32":
@@ -69,7 +73,7 @@ def _paste_retry() -> None:
     for attempt in range(3):
         try:
             if sys.platform == "win32":
-                user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+                user32 = ctypes.windll.user32
                 CTRL, V, KEYUP = 0x11, 0x56, 0x0002
                 user32.keybd_event(CTRL, 0, 0, 0)
                 user32.keybd_event(V, 0, 0, 0)
@@ -88,17 +92,17 @@ def _paste_retry() -> None:
 class _Ring:
     """Lock-free power-of-two ring for int16 audio."""
 
-    __slots__ = ("_buf", "_mask", "_head", "_tail", "_full", "_view")
+    __slots__ = ("_buf", "_full", "_head", "_mask", "_tail", "_view")
 
     def __init__(self, cap: int) -> None:
         cap = 1 << (cap - 1).bit_length()
-        self._buf = np.zeros(cap, np.int16)
+        self._buf: Int16Audio = np.zeros(cap, np.int16)
         self._mask = cap - 1
         self._head = self._tail = 0
         self._full = False
-        self._view = memoryview(self._buf).cast("h")
+        self._view = self._buf
 
-    def push(self, chunk: np.ndarray) -> None:
+    def push(self, chunk: Int16Audio) -> None:
         if chunk.ndim > 1:
             chunk = chunk.ravel()
         n = int(chunk.size)
@@ -122,11 +126,16 @@ class _Ring:
             self._tail = self._head
             self._full = True
 
-    def pop(self) -> np.ndarray:
+    def pop(self) -> Int16Audio:
         if self._head == self._tail and not self._full:
             return np.empty(0, np.int16)
-        cap = self._view.shape[0]
-        if self._head > self._tail or self._full:
+        if self._full:
+            out = (
+                self._buf.copy()
+                if self._head == self._tail
+                else np.concatenate((self._buf[self._tail :], self._buf[: self._head]))
+            )
+        elif self._head > self._tail:
             out = self._buf[self._tail : self._head].copy()
         else:
             out = np.concatenate((self._buf[self._tail :], self._buf[: self._head]))
@@ -143,57 +152,12 @@ class _Ring:
         )
 
 
-# ══════════════════════════════════ Punctuation map ═══════════════════════════
-class _Punct:
-    _MAP = {
-        ("at", "sign"): "@",
-        ("dot",): ".",
-        ("comma",): ",",
-        ("colon",): ":",
-        ("semicolon",): ";",
-        ("question", "mark"): "?",
-        ("exclamation", "point"): "!",
-        ("exclamation", "mark"): "!",
-        ("dash",): "-",
-        ("hyphen",): "-",
-        ("slash",): "/",
-        ("open", "parenthesis"): "(",
-        ("close", "parenthesis"): ")",
-        ("open", "bracket"): "[",
-        ("close", "bracket"): "]",
-        ("open", "brace"): "{",
-        ("close", "brace"): "}",
-        ("dollar", "sign"): "$",
-        ("percent", "sign"): "%",
-        ("hash", "tag"): "#",
-        ("pound", "sign"): "#",
-    }
-
-    def __init__(self) -> None:
-        self._patterns = [
-            (re.compile(r"\b" + r"\s+".join(map(re.escape, k)) + r"\b", re.I), v)
-            for k, v in self._MAP.items()
-        ]
-        self._patterns.sort(key=lambda kv: -kv[0].pattern.count(r"\s"))
-        # keep line-feeds intact; collapse only spaces/tabs
-        self._spc_before = re.compile(r"[ \t]+([,.:;?!()[\]{}])")
-        self._spc_after = re.compile(r"([(\[{])[ \t]+")
-
-    def __call__(self, text: str) -> str:
-        out = text
-        for pat, rep in self._patterns:
-            out = pat.sub(rep, out)
-        out = self._spc_before.sub(r"\1", out)
-        out = self._spc_after.sub(r"\1", out)
-        return out.strip()
-
-
 # ═════════════════════════ Thread-safe context ════════════════════════════════
 class _Context:
     """Rolling prompt history (mutex-guarded)."""
 
     def __init__(self, hist: int = 5) -> None:
-        self._buf: Deque[str] = deque(maxlen=hist)
+        self._buf: deque[str] = deque(maxlen=hist)
         self._lock = threading.Lock()
 
     def push(self, txt: str) -> None:
@@ -254,86 +218,50 @@ class _Clipboard:
         try:
             await loop.run_in_executor(self._pool, self._sync_copy, text)
         except Exception as exc:
-            LOGGER.warning("Clipboard fast-path failed: %s – fallback", exc)
+            LOGGER.warning("Clipboard fast-path failed: %s - fallback", exc)
             await loop.run_in_executor(self._pool, pyperclip.copy, text)
         self._last = (text, time.time())
-
-
-# ───────────────────────── command cleanup ──────────────────────────
-_CMD_SUBS: tuple[tuple[re.Pattern, str], ...] = (
-    # single line break  – eat optional punctuation / spaces after the cue
-    (
-        re.compile(
-            r"\b(?:new\s+line|line\s*break|newline)\b[ \t]*[.,!?;:]?[ \t]*", re.I
-        ),
-        "\n",
-    ),
-    # blank line (paragraph) – same idea, but keep the double LF
-    (re.compile(r"\bnew\s+paragraph\b[ \t]*[.,!?;:]?[ \t]*", re.I), "\n\n"),
-    (re.compile(r"\bbullet\s+point\b", re.I), "\n• "),
-    # strip runs of smart quotes, plain quote, back-tick, or � (U+FFFD)
-    (re.compile(r'[\u201C\u201D"`\uFFFD]+'), ""),
-)
-
-_SPACES_AROUND_DOT_AT = re.compile(
-    r"[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]*([@.])[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]*"
-)
-
-_SIGNOFFS = ("kind regards", "best regards", "regards", "cheers")
-SIGNOFF_PAT = re.compile(
-    r"(^|\n)(%s)\b[,.\s]*" % "|".join(_SIGNOFFS),
-    re.I,
-)
-
-# Greeting lines that should end with a comma before a blank line
-_GREETING_BREAK = re.compile(
-    r"(?i)(^|\n)(\s*(?:hi|hello|hey|kia(?:\s+ora)?|dear)\b[^\n]*?)\s*\n\n"
-)
 
 
 # ══════════════════════════ Dictation Engine ══════════════════════════════════
 class DictationEngine:
     """Microphone → (VAD) → Whisper → clipboard."""
 
-    _EMAIL_RE = re.compile(
-        r"\b([\w.-]+)\s+at(?:\s+sign)?\s+([\w.-]+)\s+dot\s+com\b", re.I
-    )
-    _URL_DOT = re.compile(r"\b([a-zA-Z0-9_-]+)\s+\.\s+([a-zA-Z0-9_-]+)")
-
     # ───────────────────────── init ──────────────────────────
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         cap = int(cfg.sample_rate * cfg.max_buffer_seconds * 2)
-        self._f32 = np.empty(cap, np.float32)
-        self._i32 = np.empty(cap, np.int32)
+        self._f32: Float32Audio = np.empty(cap, np.float32)
+        self._i32: Int32Audio = np.empty(cap, np.int32)
         self._ring = _Ring(cap) if not cfg.use_vad else None
 
-        self._model: WhisperModel | None = None
+        self._backend: FasterWhisperBackend | None = None
+        self._model_pool = ThreadPoolExecutor(max_workers=1)
         self._recording = asyncio.Event()
         self._terminate = asyncio.Event()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
         self._clip = _Clipboard()
         self._clip_q: asyncio.Queue[str | None] = asyncio.Queue(maxsize=10)
-        self._punct = _Punct()
+        self._post = DictationPostProcessor()
         self._ctx = _Context()
         self._batch_ctl = _BatchCtl(cfg)
 
         # triggers
-        self._mouse_listener: Optional[mouse.Listener] = None
-        self._mouse_press: Optional[float] = None
-        self._hold_timer: Optional[threading.Timer] = None
+        self._mouse_listener: mouse.Listener | None = None
+        self._mouse_press: float | None = None
+        self._hold_timer: threading.Timer | None = None
         self._holding = False
 
         # shadow buffer
-        self._raw_shadow: Deque[np.ndarray] = (
+        self._raw_shadow: deque[Int16Audio] = (
             deque()
             if cfg.mouse_hold_to_record
             else deque(maxlen=int(cfg.max_buffer_seconds * 1000 / cfg.chunk_ms))
         )
-        self._vad_gate: Optional[VADGate] = None
+        self._vad_gate: VADGate | None = None
 
-        self._rms: dict[Tuple[int, int, int, int], int] = {}
+        self._rms: dict[tuple[int, int, int, int], int] = {}
 
     # ──────────────────── GPU tuning ─────────────────────────
     def _tune_cuda(self) -> None:
@@ -357,19 +285,24 @@ class DictationEngine:
             ct = "float16" if self.cfg.device == "cuda" else "float32"
             object.__setattr__(self.cfg, "compute_type", ct)
 
-        def _sync() -> WhisperModel:
+        def _sync() -> FasterWhisperBackend:
             th = max(1, (os.cpu_count() or 4) // 2)
-            return WhisperModel(
-                self.cfg.model_name,
+            backend = FasterWhisperBackend(
+                model_name=self.cfg.model_name,
                 device=self.cfg.device,
                 compute_type=self.cfg.compute_type,
                 cpu_threads=th,
                 num_workers=th,
             )
+            backend.load()
+            return backend
 
         LOGGER.info("Loading %s …", self.cfg.model_name)
-        with prof("model_load", self.cfg.profile), timed("model-load"):
-            self._model = await asyncio.get_running_loop().run_in_executor(None, _sync)
+        profile = str(self.cfg.profile) if self.cfg.profile else None
+        with prof("model_load", profile), timed("model-load"):
+            self._backend = await asyncio.get_running_loop().run_in_executor(
+                self._model_pool, _sync
+            )
 
         self._tune_cuda()
         for n in (8_000, 16_000):
@@ -393,7 +326,7 @@ class DictationEngine:
             LOGGER.debug("📋 Sent")
 
     # ──────────────────── transcription ──────────────────────
-    async def _transcribe(self, audio: np.ndarray) -> str:
+    async def _transcribe(self, audio: Int16Audio) -> str:
         if audio.ndim > 1:
             audio = audio.squeeze()
         n = int(audio.size)
@@ -423,68 +356,33 @@ class DictationEngine:
         if self.cfg.mic_gain != 1.0:
             self._f32[:n] *= self.cfg.mic_gain
         np.clip(self._f32[:n], -1.0, 1.0, out=self._f32[:n])
+        if self._backend is None:
+            raise RuntimeError("transcription backend is not loaded")
 
-        with prof("infer", self.cfg.profile), timed("infer"):
-            segs, info = self._model.transcribe(
+        profile = str(self.cfg.profile) if self.cfg.profile else None
+        with prof("infer", profile), timed("infer"):
+            result = await asyncio.get_running_loop().run_in_executor(
+                self._model_pool,
+                self._backend.transcribe,
                 self._f32[:n],
-                language=self.cfg.language,
-                initial_prompt=self.cfg.initial_prompt or self._ctx.prompt(),
-                beam_size=self.cfg.beam_size,
-                best_of=self.cfg.best_of,
-                temperature=self.cfg.temperature,
-                vad_filter=True,
-                word_timestamps=False,
+                TranscriptionOptions(
+                    language=self.cfg.language,
+                    initial_prompt=self.cfg.initial_prompt or self._ctx.prompt(),
+                    beam_size=self.cfg.beam_size,
+                    best_of=self.cfg.best_of,
+                    temperature=self.cfg.temperature,
+                    vad_filter=self.cfg.model_vad_filter,
+                ),
             )
 
-        txt = "".join(s.text for s in segs).strip()
-        if txt and getattr(info, "avg_logprob", -1.0) > -0.6:
+        txt = result.text
+        if txt and result.avg_logprob > -0.6:
             self._ctx.push(txt)
 
-        # deterministic clean-ups -------------------------------------------------
-        txt = self._EMAIL_RE.sub(r"\1@\2.com", self._URL_DOT.sub(r"\1.\2", txt))
-        for pat, rep in _CMD_SUBS:
-            txt = pat.sub(rep, txt)
-
-        # ── NEW: collapse duplicate commas (word "comma" + real comma) ─────────
-        txt = re.sub(r",\s*,+", ",", txt)
-
-        # ── NEW: if a comma sneaks in *before* the paragraph break, make it a '.' ─
-        txt = re.sub(r",\s*\n\n", ".\n\n", txt)
-
-        # ── turn greeting + blank line into "Greeting,<LF><LF>"
-        txt = _GREETING_BREAK.sub(
-            lambda m: f"{m.group(1)}{m.group(2).rstrip(' ,.!?;:')},\n\n",
-            txt,
-        )
-
-        # ── NEW: add full stop before paragraph break when *no* punctuation spoken ─
-        txt = re.sub(r"([^\s.,!?;:])\s*\n\n", r"\1.\n\n", txt)
-
-        # final space trim around @ and .
-        txt = _SPACES_AROUND_DOT_AT.sub(r"\1", txt)
-
-        # safety-pass: remove spaces or tabs (NOT new-lines) that may survive
-        txt = re.sub(r"@[ \t]+", "@", txt)  # john @ gmail → john@gmail
-        txt = re.sub(r"\.[ \t]+", ".", txt)  # gmail . com  → gmail.com
-
-        # -------------------------------------------------------------------------
-        # 8. sentence-/signature-polish  (run *after* all previous tweaks)
-        # -------------------------------------------------------------------------
-
-        # 8-a  normalise common e-mail sign-offs
-        txt = SIGNOFF_PAT.sub(lambda m: f"{m.group(1)}{m.group(2).title()},\n", txt)
-
-        # 8-b  capitalise first alphabetical char of every logical line
-        txt = re.sub(
-            r"(^|\n)([• \t]*)([a-z])",
-            lambda m: m.group(1) + m.group(2) + m.group(3).upper(),
-            txt,
-        )
-
-        return txt
+        return self._post.clean_model_text(txt)
 
     # ──────────────────── shadow helper ──────────────────────
-    def _add_to_shadow(self, chunk: np.ndarray) -> None:
+    def _add_to_shadow(self, chunk: Int16Audio) -> None:
         self._raw_shadow.append(chunk)
 
     # ──────────────────── trigger install ─────────────────────
@@ -550,9 +448,13 @@ class DictationEngine:
             self._recording.clear()
             self._holding = False
             LOGGER.info("⏸️ Stopped (mouse release)")
-            fut = asyncio.run_coroutine_threadsafe(self._flush_hold(), self._loop)
+            loop = self._loop
+            if loop is None:
+                LOGGER.warning("Mouse release ignored before event loop is ready")
+                return
+            fut = asyncio.run_coroutine_threadsafe(self._flush_hold(), loop)
             fut.add_done_callback(
-                lambda f: self._loop.call_soon_threadsafe(
+                lambda f: loop.call_soon_threadsafe(
                     self._clip_q.put_nowait, f.result() or ""
                 )
             )
@@ -563,7 +465,7 @@ class DictationEngine:
 
     # ──────────────────── flush helpers ───────────────────────
     async def _flush_hold(self) -> str:
-        segs: list[np.ndarray] = []
+        segs: list[Int16Audio] = []
         if self.cfg.use_vad:
             if self._raw_shadow:
                 segs.append(concatenate(self._raw_shadow))
@@ -575,13 +477,76 @@ class DictationEngine:
                 if tail is not None and tail.size:
                     segs.append(tail)
         else:
+            if self._ring is None:
+                return ""
             segs.append(self._ring.pop())
 
         if not any(s.size for s in segs):
             return ""
         audio = concatenate(segs) if len(segs) > 1 else segs[0]
         txt = await self._transcribe(audio)
-        return self._punct(txt) if txt else ""
+        return self._post.format_clipboard_text(txt) if txt else ""
+
+    async def run_benchmark(
+        self,
+        seconds: float = 1.0,
+        *,
+        audio: Int16Audio | None = None,
+        reference: str | None = None,
+        runs: int = 1,
+    ) -> dict[str, float | int]:
+        """Measure cold-load, warm inference latency, and optional transcript quality."""
+        if seconds <= 0 and audio is None:
+            raise ValueError("benchmark seconds must be positive")
+        if runs < 1:
+            raise ValueError("benchmark runs must be positive")
+
+        if audio is None:
+            samples = max(800, int(self.cfg.sample_rate * seconds))
+            t = np.arange(samples, dtype=np.float32) / self.cfg.sample_rate
+            audio = (np.sin(2 * np.pi * 440 * t) * 12_000).astype(np.int16)
+        else:
+            samples = int(audio.size)
+        audio_seconds = samples / self.cfg.sample_rate
+
+        load_start = time.perf_counter()
+        if self._backend is None:
+            await self._load_model()
+        model_load_ms = (time.perf_counter() - load_start) * 1_000
+
+        latencies: list[float] = []
+        text = ""
+        for _ in range(runs):
+            infer_start = time.perf_counter()
+            text = await self._transcribe(audio)
+            latencies.append((time.perf_counter() - infer_start) * 1_000)
+
+        inference_ms = latencies[-1]
+        infer_seconds = sum(latencies) / 1_000 / len(latencies)
+        real_time_factor = (
+            audio_seconds / infer_seconds if infer_seconds else float("inf")
+        )
+
+        result = {
+            "audio_seconds": round(audio_seconds, 3),
+            "samples": samples,
+            "model_load_ms": round(model_load_ms, 3),
+            "inference_ms": round(inference_ms, 3),
+            "real_time_factor": round(real_time_factor, 3),
+            "chars": len(text),
+        }
+        if runs > 1:
+            result.update(summarize_latency_ms(latencies))
+        if reference is not None:
+            result["wer"] = round(word_error_rate(reference, text), 4)
+        LOGGER.info(
+            "Benchmark %.3fs audio: load %.1f ms | infer %.1f ms | %.2fx realtime",
+            result["audio_seconds"],
+            result["model_load_ms"],
+            result["inference_ms"],
+            result["real_time_factor"],
+        )
+        return result
 
     # ──────────────────── main loop ────────────────────────────
     async def _run(self) -> None:
@@ -590,7 +555,7 @@ class DictationEngine:
         if self.cfg.use_vad:
             self._vad_gate = VADGate(
                 sample_rate=self.cfg.sample_rate,
-                aggressiveness=self.cfg.vad_aggr,
+                aggressiveness=int(self.cfg.vad_aggr),
                 frame_duration_ms=self.cfg.vad_frame_duration_ms,
                 pre_buffer_chunks=self.cfg.pre_buffer_chunks,
                 post_buffer_chunks=self.cfg.post_buffer_chunks,
@@ -598,14 +563,20 @@ class DictationEngine:
                 consecutive_silence_frames=self.cfg.consecutive_silence_frames,
             )
 
+        on_raw_chunk = self._add_to_shadow
+        if not self.cfg.use_vad:
+            if self._ring is None:
+                raise RuntimeError("audio ring is not initialized")
+            on_raw_chunk = self._ring.push
+
         async with AudioStream(
             self.cfg.sample_rate,
             chunk_ms=self.cfg.chunk_ms,
             vad_gate=self._vad_gate,
             input_device=self.cfg.input_device,
-            on_raw_chunk=self._add_to_shadow if self.cfg.use_vad else self._ring.push,
+            on_raw_chunk=on_raw_chunk,
         ) as mic:
-            batch: list[np.ndarray] = []
+            batch: list[Int16Audio] = []
             samples = 0
 
             async for chunk in mic.chunks():
@@ -631,15 +602,19 @@ class DictationEngine:
                             audio = concatenate(batch) if len(batch) > 1 else batch[0]
                             txt = await self._transcribe(audio)
                             if txt:
-                                await self._clip_q.put(self._punct(txt))
+                                await self._clip_q.put(
+                                    self._post.format_clipboard_text(txt)
+                                )
                             batch.clear()
                             samples = 0
                             if not self._holding:
                                 self._raw_shadow.clear()
                 else:
                     self._ensure_ring_cap(
-                        self.cfg.max_buffer_seconds * self.cfg.sample_rate * 2
+                        int(self.cfg.max_buffer_seconds * self.cfg.sample_rate * 2)
                     )
+                    if self._ring is None:
+                        raise RuntimeError("audio ring is not initialized")
                     if self._ring.size >= int(
                         0.95 * self.cfg.max_buffer_seconds * self.cfg.sample_rate
                     ):
@@ -647,7 +622,9 @@ class DictationEngine:
                         if audio.size:
                             txt = await self._transcribe(audio)
                             if txt:
-                                await self._clip_q.put(self._punct(txt))
+                                await self._clip_q.put(
+                                    self._post.format_clipboard_text(txt)
+                                )
 
                 if self._terminate.is_set():
                     break
@@ -656,7 +633,7 @@ class DictationEngine:
                 audio = concatenate(batch) if len(batch) > 1 else batch[0]
                 txt = await self._transcribe(audio)
                 if txt:
-                    await self._clip_q.put(self._punct(txt))
+                    await self._clip_q.put(self._post.format_clipboard_text(txt))
 
         await self._clip_q.put(None)
         await clip_task
@@ -683,3 +660,7 @@ class DictationEngine:
             self._mouse_listener.stop()
         if self._hold_timer and self._hold_timer.is_alive():
             self._hold_timer.cancel()
+        if self._backend is not None:
+            self._model_pool.submit(self._backend.close).result()
+            self._backend = None
+        self._model_pool.shutdown(cancel_futures=True)

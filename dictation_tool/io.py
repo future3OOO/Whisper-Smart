@@ -4,15 +4,29 @@ import asyncio
 import platform
 import queue
 import threading
+import warnings
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterable
 from enum import Enum
+from types import TracebackType
+from typing import Any, cast
 
 import numpy as np
-import sounddevice as sd
-import webrtcvad
+import sounddevice as sd  # type: ignore[import-untyped]
+from numpy.typing import NDArray
 
 from .utils import LOGGER, timed
+
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=r"pkg_resources is deprecated as an API.*",
+        category=UserWarning,
+    )
+    import webrtcvad  # type: ignore[import-untyped]
+
+Int16Audio = NDArray[np.int16]
+Float64Array = NDArray[np.float64]
 
 __all__ = [
     "AudioStream",
@@ -87,14 +101,14 @@ class VADGate:
             "current_state": self.state.value,
         }
 
-    def __call__(self, chunk: np.ndarray) -> Iterable[np.ndarray]:
+    def __call__(self, chunk: Int16Audio) -> Iterable[Int16Audio]:
         """Process audio chunk and yield voiced segments with optimal buffering.
 
         Returns segments only when speech has definitively ended,
         ensuring complete utterances are captured.
         """
         pcm = chunk.tobytes()
-        results: list[np.ndarray] = []
+        results: list[Int16Audio] = []
 
         # Process each frame in the chunk
         for i in range(0, len(pcm), self.bytes_per_frame):
@@ -118,7 +132,7 @@ class VADGate:
 
         return results
 
-    def _process_frame(self, frame: bytes, is_speech: bool) -> np.ndarray | None:
+    def _process_frame(self, frame: bytes, is_speech: bool) -> Int16Audio | None:
         """Process a single frame through the VAD state machine."""
         if self.state == VADState.SILENCE:
             if is_speech:
@@ -164,7 +178,7 @@ class VADGate:
 
         return None
 
-    def _create_segment(self) -> np.ndarray:
+    def _create_segment(self) -> Int16Audio:
         """Create a complete speech segment from buffers."""
         if not self.speech_buffer:
             return np.array([], dtype=np.int16)
@@ -184,7 +198,7 @@ class VADGate:
         self.speech_buffer.clear()
         self.post_buffer.clear()
 
-    def force_flush(self) -> np.ndarray | None:
+    def force_flush(self) -> Int16Audio | None:
         """Force flush any pending speech buffer (e.g., on session end)."""
         if self.speech_buffer:
             segment = self._create_segment()
@@ -207,7 +221,7 @@ class AudioStream:
         chunk_ms: int = 10,
         vad_gate: VADGate | None = None,
         input_device: str | int | None = None,
-        on_raw_chunk: Callable[[np.ndarray], None] | None = None,
+        on_raw_chunk: Callable[[Int16Audio], None] | None = None,
     ) -> None:
         """
         `on_raw_chunk` receives every sample-rate-normalized frame for shadow buffering.
@@ -218,13 +232,13 @@ class AudioStream:
         self._gate = vad_gate
         self._input_device = input_device
         self._on_raw_chunk = on_raw_chunk
-        self._q: queue.Queue[np.ndarray] = queue.Queue(maxsize=64)
+        self._q: queue.Queue[Int16Audio] = queue.Queue(maxsize=64)
         self._stop = threading.Event()
 
         # Set during _open_stream when native rate != target rate
         self._native_sr: int = sample_rate
-        self._resample_idx: np.ndarray | None = None
-        self._native_arange: np.ndarray | None = None
+        self._resample_idx: Float64Array | None = None
+        self._native_arange: Float64Array | None = None
 
     async def __aenter__(self) -> AudioStream:
         self._stream = self._open_stream(self._input_device)
@@ -282,7 +296,7 @@ class AudioStream:
         sr: int,
         blocksize: int | None = None,
     ) -> sd.InputStream:
-        params: dict = {}
+        params: dict[str, str | int] = {}
         if device is not None:
             params["device"] = device
         return sd.InputStream(
@@ -317,7 +331,9 @@ class AudioStream:
     def _setup_resampler(self, native_sr: int, native_frames: int) -> None:
         target_frames = int(self._sr * self._chunk_ms / 1000)
         self._native_sr = native_sr
-        self._resample_idx = np.linspace(0, native_frames - 1, target_frames)
+        self._resample_idx = np.linspace(
+            0, native_frames - 1, target_frames, dtype=np.float64
+        )
         self._native_arange = np.arange(native_frames, dtype=np.float64)
 
     def _log_mic(self, dev: str | int | None, sr: int, *, resample: bool) -> None:
@@ -352,14 +368,10 @@ class AudioStream:
         """Return all input device indices, WASAPI first, then others."""
         hostapis = sd.query_hostapis()
         api_priority = {"WASAPI": 0, "DirectSound": 1, "MME": 2}
-        devices = sd.query_devices()
-        inputs = [
-            (i, d)
-            for i, d in enumerate(devices)  # type: ignore[arg-type]
-            if d["max_input_channels"] > 0
-        ]
+        devices = cast(Iterable[dict[str, Any]], sd.query_devices())
+        inputs = [(i, d) for i, d in enumerate(devices) if d["max_input_channels"] > 0]
 
-        def sort_key(pair: tuple) -> tuple:
+        def sort_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, Any]:
             _, d = pair
             api_name = hostapis[d["hostapi"]]["name"]
             pri = next((v for k, v in api_priority.items() if k in api_name), 10)
@@ -368,13 +380,18 @@ class AudioStream:
         inputs.sort(key=sort_key)
         return [i for i, _ in inputs]
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self._stop.set()
         self._stream.stop()
         self._stream.close()
 
     # ── internals ────────────────────────────────────────────────────────
-    def _callback(self, indata: np.ndarray, _frames: int, *_) -> None:
+    def _callback(self, indata: Int16Audio, _frames: int, *_args: object) -> None:
         try:
             chunk = indata.copy()
             if self._resample_idx is not None and self._native_arange is not None:
@@ -393,7 +410,7 @@ class AudioStream:
         except queue.Full:
             pass
 
-    async def chunks(self) -> AsyncIterator[np.ndarray]:
+    async def chunks(self) -> AsyncIterator[Int16Audio]:
         loop = asyncio.get_running_loop()
         while not self._stop.is_set():
             raw = await loop.run_in_executor(None, self._q.get)
@@ -404,6 +421,6 @@ class AudioStream:
                 yield raw
 
 
-def concatenate(chunks: Iterable[np.ndarray]) -> np.ndarray:
+def concatenate(chunks: Iterable[Int16Audio]) -> Int16Audio:
     with timed("concat"):
-        return np.concatenate(chunks, dtype=np.int16)
+        return np.concatenate(list(chunks), dtype=np.int16)

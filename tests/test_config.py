@@ -16,17 +16,17 @@ class TestConfig:
         cfg = Config()
 
         # Whisper settings
-        assert cfg.model_name == "large-v3"
-        assert cfg.compute_type == "float16"
+        assert cfg.model_name == "distil-large-v3"
+        assert cfg.compute_type == "auto"
         assert cfg.device == "cuda"
         assert cfg.attention_backend == "flash"
 
         # Audio/runtime settings
         assert cfg.sample_rate == 16_000
-        assert cfg.chunk_ms == 30
-        assert cfg.vad_aggr == 3
+        assert cfg.chunk_ms == 10
+        assert cfg.vad_aggr == 2
         assert cfg.use_vad is True
-        assert cfg.max_buffer_seconds == 12.0
+        assert cfg.max_buffer_seconds == 60.0
 
         # VADGate settings
         assert cfg.vad_frame_duration_ms == 30
@@ -36,24 +36,25 @@ class TestConfig:
         assert cfg.consecutive_silence_frames == 8
 
         # Trigger settings
-        assert cfg.hotkey == "ctrl+space"
-        assert cfg.mouse_btn == "middle"
-        assert cfg.enable_mouse_trigger is True
+        assert cfg.hotkey == "ctrl+alt+space"
+        assert cfg.mouse_btn == "right"
+        assert cfg.enable_mouse_trigger is False
         assert cfg.dual_trigger_required is False
 
         # Retry logic settings
         assert cfg.enable_retry_logic is True
-        assert cfg.retry_temperatures == (0.0, 0.3, 0.6)  # GPU-optimized default
+        assert cfg.retry_temperatures == (0.0, 0.6)
         assert cfg.max_retries == 3
-        assert cfg.min_confidence_threshold == 0.30
+        assert cfg.min_confidence_threshold == 0.6
 
         # GPU optimization settings
-        assert cfg.torch_compile_mode == "default"
+        assert cfg.torch_compile_mode == "off"
         assert cfg.attention_backend == "flash"
 
         # Transcription settings
-        assert cfg.language == "en"
+        assert cfg.language is None
         assert cfg.initial_prompt is None
+        assert cfg.model_vad_filter is True
 
         # Misc settings
         assert cfg.log_dir == Path.home() / ".dictation_tool" / "logs"
@@ -71,7 +72,7 @@ class TestConfig:
             chunk_ms=120,
             vad_aggr=3,
             use_vad=False,
-            max_buffer_seconds=5.0,
+            max_buffer_seconds=6.0,
             pre_buffer_chunks=5,
             post_buffer_chunks=3,
             consecutive_speech_frames=2,
@@ -101,7 +102,7 @@ class TestConfig:
         assert cfg.chunk_ms == 120
         assert cfg.vad_aggr == 3
         assert cfg.use_vad is False
-        assert cfg.max_buffer_seconds == 5.0
+        assert cfg.max_buffer_seconds == 6.0
         assert cfg.pre_buffer_chunks == 5
         assert cfg.post_buffer_chunks == 3
         assert cfg.consecutive_speech_frames == 2
@@ -111,7 +112,11 @@ class TestConfig:
         assert cfg.enable_mouse_trigger is False
         assert cfg.dual_trigger_required is True
         assert cfg.enable_retry_logic is False
-        assert cfg.retry_temperatures == (0.0, 0.5, 1.0)  # Should be tuple after __post_init__
+        assert cfg.retry_temperatures == (
+            0.0,
+            0.5,
+            1.0,
+        )  # Should be tuple after __post_init__
         assert cfg.max_retries == 2
         assert cfg.min_confidence_threshold == 0.8
         assert cfg.torch_compile_mode == "reduce-overhead"
@@ -152,7 +157,7 @@ class TestConfig:
         assert hasattr(Config, "__slots__")
 
         # Should not be able to add arbitrary attributes
-        with pytest.raises(AttributeError):
+        with pytest.raises((AttributeError, ValueError)):
             cfg.random_attribute = "should fail"
 
     def test_config_path_handling(self):

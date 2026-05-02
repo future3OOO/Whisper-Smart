@@ -22,13 +22,15 @@ torch==2.5.1+cu121          ; python_version == "3.10"
 torchaudio==2.5.1+cu121     ; python_version == "3.10"
 torchvision==0.20.1+cu121   ; python_version == "3.10"
 
-faster-whisper>=1.1.1
+ctranslate2>=4.7.1,<5
+faster-whisper>=1.2.1,<2
 einops>=0.8.1               # flash-attn dep
 
 sounddevice>=0.4.6
 soundfile>=0.12.1
 numpy>=1.23.5
 webrtcvad>=2.0.10           # tiny CPU VAD
+setuptools<81               # webrtcvad imports pkg_resources
 
 ###############################################################################
 # User input & automation
@@ -43,4 +45,3 @@ pyautogui>=0.9.54
 # Optional acceleration back-ends
 ###############################################################################
 onnxruntime-gpu>=1.16.0      ; extra == "onnx"
-ctranslate2>=4.1.0           ; extra == "ctranslate2"

@@ -24,6 +24,7 @@ def test_gpu_smoke():
 
 
 @pytest.mark.gpu
+@pytest.mark.asyncio
 @pytest.mark.timeout(15)
 @pytest.mark.xfail(not torch.cuda.is_available(), reason="CUDA not available")
 async def test_gpu_engine_init():
@@ -42,7 +43,7 @@ async def test_gpu_engine_init():
 
     # Test model loading
     await engine._load_model()
-    assert engine._model is not None
+    assert engine._backend is not None
 
     # Test that model is on GPU
     # Note: faster-whisper models don't expose device directly,
@@ -54,6 +55,7 @@ async def test_gpu_engine_init():
 
 
 @pytest.mark.gpu
+@pytest.mark.asyncio
 @pytest.mark.timeout(15)
 @pytest.mark.xfail(not torch.cuda.is_available(), reason="CUDA not available")
 async def test_gpu_transcription_smoke():

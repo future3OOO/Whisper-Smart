@@ -1,5 +1,5 @@
 """
-dictation_tool.config – unified runtime settings (v3.3-titan)
+dictation_tool.config - unified runtime settings (v3.3-titan)
 --------------------------------------------------------------
 • Env-var overrides:  DICT__MODEL_NAME=base.en   (any field)
 • All legacy fields kept, plus new titan options
@@ -9,21 +9,17 @@ dictation_tool.config – unified runtime settings (v3.3-titan)
 from __future__ import annotations
 
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Literal, Sequence, Union, Optional
+from typing import Literal
 
 try:
     import torch
 except ImportError:
     torch = None  # type: ignore
 
-# Pydantic 2:  BaseSettings moved to the helper package
-try:
-    from pydantic_settings import BaseSettings          # v2+
-except ImportError:                                      # v1 fallback
-    from pydantic import BaseSettings  # type: ignore
-
-from pydantic import Field, root_validator, validator
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ------------------------------------------------------------------ enums
 ComputeType = Literal[
@@ -39,29 +35,33 @@ TorchCompileMode = Literal["off", "default", "reduce-overhead", "max-autotune"]
 AttentionBackend = Literal["none", "flash", "mem-eff"]
 ClipboardMode = Literal["async", "thread", "direct"]
 
+
 # ------------------------------------------------------------------ Config
-class Config(BaseSettings, extra="forbid"):
+class Config(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="DICT__", extra="forbid")
+
     # ============ Whisper ============ -----------------------------
-    model_name: str = Field("large-v3", description="Whisper checkpoint")
+    model_name: str = Field("distil-large-v3", description="Whisper checkpoint")
     compute_type: ComputeType = "auto"
     device: str = Field(
-        default_factory=lambda: "cuda"
-        if torch is not None and torch.cuda.is_available()
-        else "cpu"
+        default_factory=lambda: (
+            "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
+        )
     )
     beam_size: int = 5
     best_of: int = 1
     temperature: float = 0.0
-    language: Optional[str] = None
-    initial_prompt: Optional[str] = None
+    language: str | None = None
+    initial_prompt: str | None = None
+    model_vad_filter: bool = True
 
     # ============ Audio / runtime ============ ----------------------
     sample_rate: int = 16_000
     chunk_ms: int = Field(10, ge=5, le=1000)
     use_vad: bool = True
-    vad_aggr: Union[int, Literal["auto"]] = "auto"
+    vad_aggr: int | Literal["auto"] = "auto"
     max_buffer_seconds: float = Field(60.0, gt=5.0, le=120.0)  # titan default 20 s
-    input_device: Optional[str] = None
+    input_device: str | None = None
     mic_gain: float = Field(1.0, gt=0.1, le=10.0)
 
     # --- VADGate tuning -------------------------------------------
@@ -87,13 +87,13 @@ class Config(BaseSettings, extra="forbid"):
     mouse_hold_threshold_seconds: float = Field(0.2, gt=0.05, le=2.0)
 
     # ============ Clipboard ================= -----------------------
-    copy_on_release: bool = False       # kept for bw-compat (internal only)
+    copy_on_release: bool = False  # kept for bw-compat (internal only)
     auto_paste_on_release: bool = False
     clipboard_mode: ClipboardMode = "async"
 
     # ============ Retry logic =============== -----------------------
     enable_retry_logic: bool = True
-    retry_temperatures: Optional[Sequence[float]] = None
+    retry_temperatures: Sequence[float] | None = None
     max_retries: int = Field(3, ge=1, le=10)
     min_confidence_threshold: float = Field(0.6, ge=0.0, le=1.0)
 
@@ -103,66 +103,76 @@ class Config(BaseSettings, extra="forbid"):
 
     # ============ Misc ===================== -----------------------
     log_dir: Path = Path.home() / ".dictation_tool" / "logs"
-    profile: Optional[Path] = Field(
+    profile: Path | None = Field(
         None, description="Path to JSONL profiler output; if None profiling is off"
     )
 
-    # ----------------- Pydantic config ----------------------------
-    class Config:
-        env_prefix = "DICT__"   # DICT__FOO=bar
-
     # ----------------- Validators ---------------------------------
-    @validator("vad_aggr", pre=True)
+    @field_validator("vad_aggr", mode="before")
+    @classmethod
     def _auto_vad(cls, v: int | str) -> int:
-        return 2 if v == "auto" else v
+        if v == "auto":
+            return 2
+        return int(v)
 
-    @validator("beam_size")
+    @field_validator("beam_size")
+    @classmethod
     def _min_beam(cls, v: int) -> int:
         if v < 1:
-            print("beam_size must be ≥1 – resetting to 1.", file=sys.stderr)
+            print("beam_size must be >=1 - resetting to 1.", file=sys.stderr)
             return 1
         return v
 
-    @validator("best_of")
+    @field_validator("best_of")
+    @classmethod
     def _min_best_of(cls, v: int) -> int:
         return max(v, 1)
 
-    @validator("temperature")
+    @field_validator("temperature")
+    @classmethod
     def _clamp_temp(cls, v: float) -> float:
         return max(0.0, min(v, 1.0))
 
-    @validator("batch_max_chunks")
+    @field_validator("batch_max_chunks")
+    @classmethod
     def _batch_chunks_range(cls, v: int) -> int:
         if not 2 <= v <= 10:
             raise ValueError("batch_max_chunks must be 2-10")
         return v
 
-    @root_validator(skip_on_failure=True)
-    def _post_init_logic(cls, values: dict[str, Any]) -> dict[str, Any]:
+    @model_validator(mode="after")
+    def _post_init_logic(self) -> Config:
         # -------- best_of vs beam_size ----------
-        if values["beam_size"] == 1 and values["best_of"] > 1:
-            print("best_of ignored when beam_size == 1 – setting best_of = 1.",
-                  file=sys.stderr)
-            values["best_of"] = 1
+        if self.beam_size == 1 and self.best_of > 1:
+            print(
+                "best_of ignored when beam_size == 1 - setting best_of = 1.",
+                file=sys.stderr,
+            )
+            object.__setattr__(self, "best_of", 1)
 
         # -------- retry temp defaults -----------
-        if values["retry_temperatures"] is None:
-            values["retry_temperatures"] = (0.0, 0.6) if values["device"] == "cuda" else (0.0, 0.4, 0.7)
+        if self.retry_temperatures is None:
+            retry_temperatures = (
+                (0.0, 0.6) if self.device == "cuda" else (0.0, 0.4, 0.7)
+            )
+            object.__setattr__(self, "retry_temperatures", retry_temperatures)
 
         # -------- torch compatibility -----------
         try:
-            import torch  # noqa: F401
+            import torch
 
             major, minor = map(int, torch.__version__.split("+")[0].split(".")[:2])
-            if values["torch_compile_mode"] != "off" and (major, minor) < (2, 1):
-                print("torch.compile needs PyTorch ≥2.1 – disabling.", file=sys.stderr)
-                values["torch_compile_mode"] = "off"
+            if self.torch_compile_mode != "off" and (major, minor) < (2, 1):
+                print("torch.compile needs PyTorch >=2.1 - disabling.", file=sys.stderr)
+                object.__setattr__(self, "torch_compile_mode", "off")
 
-            if values["attention_backend"] != "none" and (major, minor) < (2, 0):
-                print("Flash/Mem-Eff attention need PyTorch ≥2.0 – disabling.",
-                      file=sys.stderr)
-                values["attention_backend"] = "none"
+            if self.attention_backend != "none" and (major, minor) < (2, 0):
+                print(
+                    "Flash/Mem-Eff attention need PyTorch >=2.0 - disabling.",
+                    file=sys.stderr,
+                )
+                object.__setattr__(self, "attention_backend", "none")
         except ImportError:
             pass
 
-        return values
+        return self
