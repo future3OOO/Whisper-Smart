@@ -172,6 +172,19 @@ class TestMainModule:
 
             args_used = mock_engine_class.call_args[0][0]
             assert args_used.mouse_btn == expected
+            assert args_used.enable_mouse_trigger is False
+
+    @mock.patch("dictation_tool.__main__.asyncio.run")
+    @mock.patch("dictation_tool.__main__.DictationEngine")
+    def test_mouse_trigger_opt_in(self, mock_engine_class, mock_run):
+        with mock.patch("sys.argv", ["dictation_tool", "--mouse"]):
+            mock_engine = mock.MagicMock()
+            mock_engine_class.return_value = mock_engine
+
+            __main__.main()
+
+            args_used = mock_engine_class.call_args[0][0]
+            assert args_used.enable_mouse_trigger is True
 
     @mock.patch("dictation_tool.__main__.asyncio.run")
     @mock.patch("dictation_tool.__main__.DictationEngine")
