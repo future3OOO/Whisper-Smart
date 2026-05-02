@@ -7,6 +7,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from dictation_tool import engine as engine_module
 from dictation_tool.config import Config
 from dictation_tool.engine import DictationEngine, _Ring
 from dictation_tool.transcription import TranscriptionResult
@@ -185,6 +186,36 @@ class TestAdvancedDictationEngine:
         assert captured["samples"] == shadow.size
         eng._vad_gate.force_flush.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_flush_hold_snapshots_shadow_before_concatenate(self, monkeypatch):
+        cfg = Config(device="cpu", attention_backend="none", use_vad=True)
+        eng = DictationEngine(cfg)
+        shadow = np.ones(1600, dtype=np.int16)
+        concurrent = np.full(800, 2, dtype=np.int16)
+        captured = {}
+        added = False
+        original_concatenate = engine_module.concatenate
+
+        def interleaving_concatenate(chunks):
+            nonlocal added
+            if not added:
+                added = True
+                eng._add_to_shadow(concurrent)
+            return original_concatenate(chunks)
+
+        async def transcribe(audio):
+            captured["samples"] = audio.size
+            return "hello"
+
+        monkeypatch.setattr(engine_module, "concatenate", interleaving_concatenate)
+        eng._add_to_shadow(shadow)
+        eng._transcribe = AsyncMock(side_effect=transcribe)
+
+        assert await eng._flush_hold() == "hello"
+        assert captured["samples"] == shadow.size
+        assert len(eng._raw_shadow) == 1
+        np.testing.assert_array_equal(eng._raw_shadow[0], concurrent)
+
     @patch("dictation_tool.engine.AudioStream")
     @pytest.mark.asyncio
     async def test_hold_mode_does_not_transcribe_vad_batches_before_release(
@@ -230,6 +261,7 @@ class TestAdvancedDictationEngine:
 
         await eng._run()
         assert m_stream.call_args.kwargs["vad_gate"] is None
+        assert m_stream.call_args.kwargs["on_raw_chunk"].__self__ is eng
 
     # ── buffer overflow branch ─────────────────────────────────
     def test_ring_pop_returns_full_buffer(self):

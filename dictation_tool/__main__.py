@@ -10,10 +10,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import wave
 from pathlib import Path
 from typing import cast
 
-from dictation_tool.benchmark import load_wav_mono_int16, parse_model_matrix
+from dictation_tool.benchmark import Int16Audio, load_wav_mono_int16, parse_model_matrix
 from dictation_tool.config import Config
 from dictation_tool.engine import DictationEngine
 from dictation_tool.prompts import PRESETS
@@ -190,13 +191,10 @@ def _run_benchmark_matrix(
     cfg: Config,
     models: tuple[str, ...],
     *,
-    audio_path: str | None = None,
+    audio: Int16Audio | None = None,
     reference: str | None = None,
     runs: int = 1,
 ) -> None:
-    audio = (
-        load_wav_mono_int16(Path(audio_path), cfg.sample_rate) if audio_path else None
-    )
     for model_name in models:
         engine = DictationEngine(_config_with_model(cfg, model_name))
         try:
@@ -293,16 +291,27 @@ def main() -> None:
     if args.bench:
         if args.bench_runs < 1:
             parser.error("--bench-runs must be >= 1")
-        models = (
-            parse_model_matrix(args.bench_models)
-            if args.bench_models
-            else (cfg.model_name,)
-        )
+        try:
+            models = (
+                parse_model_matrix(args.bench_models)
+                if args.bench_models
+                else (cfg.model_name,)
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+
+        audio = None
+        if args.bench_audio:
+            try:
+                audio = load_wav_mono_int16(Path(args.bench_audio), cfg.sample_rate)
+            except (OSError, ValueError, wave.Error) as exc:
+                parser.error(str(exc))
+
         try:
             _run_benchmark_matrix(
                 cfg,
                 models,
-                audio_path=args.bench_audio,
+                audio=audio,
                 reference=args.bench_reference,
                 runs=args.bench_runs,
             )

@@ -240,6 +240,7 @@ class DictationEngine:
         self._recording = asyncio.Event()
         self._terminate = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._audio_lock = threading.Lock()
 
         self._clip = _Clipboard()
         self._clip_q: asyncio.Queue[str | None] = asyncio.Queue(maxsize=10)
@@ -384,7 +385,31 @@ class DictationEngine:
 
     # ──────────────────── shadow helper ──────────────────────
     def _add_to_shadow(self, chunk: Int16Audio) -> None:
-        self._raw_shadow.append(chunk)
+        with self._audio_lock:
+            self._raw_shadow.append(chunk)
+
+    def _pop_raw_shadow(self) -> list[Int16Audio]:
+        with self._audio_lock:
+            chunks = list(self._raw_shadow)
+            self._raw_shadow.clear()
+        return chunks
+
+    def _clear_raw_shadow(self) -> None:
+        with self._audio_lock:
+            self._raw_shadow.clear()
+
+    def _add_to_ring(self, chunk: Int16Audio) -> None:
+        with self._audio_lock:
+            if self._ring is not None:
+                self._ring.push(chunk)
+
+    def _pop_ring(self) -> Int16Audio:
+        with self._audio_lock:
+            return self._ring.pop() if self._ring is not None else np.empty(0, np.int16)
+
+    def _ring_size(self) -> int:
+        with self._audio_lock:
+            return self._ring.size if self._ring is not None else 0
 
     # ──────────────────── trigger install ─────────────────────
     def _install_triggers(self) -> None:
@@ -418,7 +443,7 @@ class DictationEngine:
             if down:
                 self._mouse_pressed = True
                 if self.cfg.mouse_hold_to_record:
-                    self._raw_shadow.clear()  # start fresh
+                    self._clear_raw_shadow()
                     self._mouse_press = time.time()
                     self._holding = False
                     self._hold_timer = threading.Timer(
@@ -474,9 +499,9 @@ class DictationEngine:
     async def _flush_hold(self) -> str:
         segs: list[Int16Audio] = []
         if self.cfg.use_vad:
-            if self._raw_shadow:
-                segs.append(concatenate(self._raw_shadow))
-                self._raw_shadow.clear()
+            shadow = self._pop_raw_shadow()
+            if shadow:
+                segs.append(concatenate(shadow))
                 if self._vad_gate:
                     self._vad_gate.force_flush()
             elif self._vad_gate:
@@ -484,9 +509,10 @@ class DictationEngine:
                 if tail is not None and tail.size:
                     segs.append(tail)
         else:
-            if self._ring is None:
+            audio = self._pop_ring()
+            if not audio.size:
                 return ""
-            segs.append(self._ring.pop())
+            segs.append(audio)
 
         if not any(s.size for s in segs):
             return ""
@@ -574,7 +600,7 @@ class DictationEngine:
         if not self.cfg.use_vad:
             if self._ring is None:
                 raise RuntimeError("audio ring is not initialized")
-            on_raw_chunk = self._ring.push
+            on_raw_chunk = self._add_to_ring
 
         async with AudioStream(
             self.cfg.sample_rate,
@@ -615,17 +641,15 @@ class DictationEngine:
                             batch.clear()
                             samples = 0
                             if not self._holding:
-                                self._raw_shadow.clear()
+                                self._clear_raw_shadow()
                 else:
                     self._ensure_ring_cap(
                         int(self.cfg.max_buffer_seconds * self.cfg.sample_rate * 2)
                     )
-                    if self._ring is None:
-                        raise RuntimeError("audio ring is not initialized")
-                    if self._ring.size >= int(
+                    if self._ring_size() >= int(
                         0.95 * self.cfg.max_buffer_seconds * self.cfg.sample_rate
                     ):
-                        audio = self._ring.pop()
+                        audio = self._pop_ring()
                         if audio.size:
                             txt = await self._transcribe(audio)
                             if txt:
@@ -647,10 +671,11 @@ class DictationEngine:
 
     # ──────────────────── ring growth helper ──────────────────
     def _ensure_ring_cap(self, needed: int) -> None:
-        if self._ring and needed > self._ring._buf.size:
-            new_cap = 1 << (needed * 2 - 1).bit_length()
-            LOGGER.debug("Growing ring to %d samples", new_cap)
-            self._ring = _Ring(new_cap)
+        with self._audio_lock:
+            if self._ring and needed > self._ring._buf.size:
+                new_cap = 1 << (needed * 2 - 1).bit_length()
+                LOGGER.debug("Growing ring to %d samples", new_cap)
+                self._ring = _Ring(new_cap)
 
     # ──────────────────── public API ───────────────────────────
     async def start(self) -> None:

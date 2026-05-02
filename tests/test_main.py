@@ -337,3 +337,39 @@ class TestMainModule:
             reference="hello world",
             runs=3,
         )
+
+    @mock.patch("dictation_tool.__main__.DictationEngine")
+    def test_bench_rejects_empty_model_matrix_without_traceback(
+        self, mock_engine_class
+    ):
+        with mock.patch(
+            "sys.argv",
+            ["dictation_tool", "--device", "cpu", "--bench", "--bench-models", ","],
+        ):
+            with pytest.raises(SystemExit):
+                __main__.main()
+
+        mock_engine_class.assert_not_called()
+
+    @mock.patch("dictation_tool.__main__.load_wav_mono_int16")
+    @mock.patch("dictation_tool.__main__.DictationEngine")
+    def test_bench_rejects_invalid_audio_without_traceback(
+        self, mock_engine_class, mock_load_audio
+    ):
+        mock_load_audio.side_effect = ValueError("benchmark WAV fixtures must be PCM")
+
+        with mock.patch(
+            "sys.argv",
+            [
+                "dictation_tool",
+                "--device",
+                "cpu",
+                "--bench",
+                "--bench-audio",
+                "bad.wav",
+            ],
+        ):
+            with pytest.raises(SystemExit):
+                __main__.main()
+
+        mock_engine_class.assert_not_called()
