@@ -275,6 +275,26 @@ class TestAdvancedDictationEngine:
             np.array([1, 2, 3, 4], dtype=np.int16),
         )
 
+    def test_ring_exact_fill_after_wrap_returns_all_samples(self):
+        ring = _Ring(8)
+
+        ring.push(np.arange(6, dtype=np.int16))
+        ring.pop()
+        ring.push(np.arange(10, 17, dtype=np.int16))
+        ring.push(np.array([17], dtype=np.int16))
+
+        assert ring.size == 8
+        np.testing.assert_array_equal(ring.pop(), np.arange(10, 18, dtype=np.int16))
+
+    def test_ring_wrap_overwrite_keeps_latest_capacity(self):
+        ring = _Ring(8)
+
+        ring.push(np.arange(6, dtype=np.int16))
+        ring.push(np.arange(6, 10, dtype=np.int16))
+
+        assert ring.size == 8
+        np.testing.assert_array_equal(ring.pop(), np.arange(2, 10, dtype=np.int16))
+
     @patch("dictation_tool.engine.AudioStream")
     @pytest.mark.asyncio
     async def test_buffer_overflow(self, m_stream):

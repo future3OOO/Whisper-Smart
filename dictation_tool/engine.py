@@ -114,6 +114,7 @@ class _Ring:
             self._head = self._tail = 0
             self._full = True
             return
+        size = self.size
         head, end = self._head, self._head + n
         if end <= cap:
             self._view[head:end] = chunk
@@ -122,7 +123,7 @@ class _Ring:
             self._view[head:] = chunk[:cut]
             self._view[: end - cap] = chunk[cut:]
         self._head = end & self._mask
-        if self._full or (self._head <= self._tail < head):
+        if self._full or size + n >= cap:
             self._tail = self._head
             self._full = True
 
@@ -132,7 +133,7 @@ class _Ring:
         if self._full:
             out = (
                 self._buf.copy()
-                if self._head == self._tail
+                if self._head == 0
                 else np.concatenate((self._buf[self._tail :], self._buf[: self._head]))
             )
         elif self._head > self._tail:
