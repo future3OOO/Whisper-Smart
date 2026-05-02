@@ -11,6 +11,23 @@ def test_postprocess_formats_email_address_and_spacing():
     )
 
 
+def test_postprocess_formats_email_with_spoken_at_and_literal_domain():
+    post = DictationPostProcessor()
+
+    assert post.process("mckenzielawrence at gmail.com") == (
+        "Mckenzielawrence@gmail.com"
+    )
+
+
+def test_postprocess_removes_repeated_cc_bcc_tail_after_email_address():
+    post = DictationPostProcessor()
+
+    assert (
+        post.process("mckinzylawrence dot gmail dot com, cc, bcc, bcc, bcc, bcc,")
+        == "Mckinzylawrence@gmail.com"
+    )
+
+
 def test_postprocess_preserves_email_paragraph_shape():
     post = DictationPostProcessor()
 

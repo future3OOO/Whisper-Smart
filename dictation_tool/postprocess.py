@@ -33,7 +33,15 @@ class DictationPostProcessor:
         ("pound", "sign"): "#",
     }
     _EMAIL_RE: ClassVar[re.Pattern[str]] = re.compile(
-        r"\b([\w.-]+)\s+at(?:\s+sign)?\s+([\w.-]+)\s+dot\s+com\b", re.I
+        r"\b(?!www\b)([a-zA-Z0-9][\w.-]*)\s+"
+        r"(?:at(?:\s+(?:sign|symbol))?|dot)\s+"
+        r"([a-zA-Z0-9-]+(?:(?:\s+dot\s+|\.)[a-zA-Z0-9-]+)+)\b",
+        re.I,
+    )
+    _EMAIL_CC_BCC_TAIL: ClassVar[re.Pattern[str]] = re.compile(
+        r"(\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"
+        r"(?:\s*,\s*(?:cc|bcc)\b)+\s*,?\s*$",
+        re.I,
     )
     _URL_DOT: ClassVar[re.Pattern[str]] = re.compile(
         r"\b([a-zA-Z0-9_-]+)\s+\.\s+([a-zA-Z0-9_-]+)"
@@ -78,10 +86,16 @@ class DictationPostProcessor:
         self._spc_before = re.compile(r"[ \t]+([,.:;?!()[\]{}])")
         self._spc_after = re.compile(r"([(\[{])[ \t]+")
 
+    @staticmethod
+    def _format_email_match(match: re.Match[str]) -> str:
+        domain = re.sub(r"\s+dot\s+", ".", match.group(2), flags=re.I)
+        return f"{match.group(1)}@{domain}"
+
     def clean_model_text(self, text: str) -> str:
         """Apply command, email, URL, sign-off, and line formatting rules."""
-        text = self._EMAIL_RE.sub(r"\1@\2.com", text)
+        text = self._EMAIL_RE.sub(self._format_email_match, text)
         text = self._URL_DOT.sub(r"\1.\2", text)
+        text = self._EMAIL_CC_BCC_TAIL.sub(r"\1", text)
         for pattern, replacement in self._CMD_SUBS:
             text = pattern.sub(replacement, text)
 
