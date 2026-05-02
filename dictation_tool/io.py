@@ -371,11 +371,11 @@ class AudioStream:
         devices = cast(Iterable[dict[str, Any]], sd.query_devices())
         inputs = [(i, d) for i, d in enumerate(devices) if d["max_input_channels"] > 0]
 
-        def sort_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, Any]:
-            _, d = pair
+        def sort_key(pair: tuple[int, dict[str, Any]]) -> tuple[int, int]:
+            idx, d = pair
             api_name = hostapis[d["hostapi"]]["name"]
             pri = next((v for k, v in api_priority.items() if k in api_name), 10)
-            return (pri, d.get("index", 0))
+            return (pri, idx)
 
         inputs.sort(key=sort_key)
         return [i for i, _ in inputs]

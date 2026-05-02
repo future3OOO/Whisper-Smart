@@ -93,7 +93,7 @@ class TestVADGate:
         assert len(result) == 0
 
         # Frames should be buffered before speech starts.
-        assert len(vad_gate.pre_buffer) >= 0
+        assert len(vad_gate.pre_buffer) > 0
 
 
 class TestAudioStream:

@@ -124,6 +124,6 @@ Live matrix results:
 - `pytest tests/test_gpu_smoke.py -q -m gpu` passes: 3 passed.
 - Focused PRD tests pass across CLI, engine, audio I/O, backend, post-processing, benchmark helpers, config, and VAD.
 - `black --check dictation_tool tests` passes.
-- `ruff check dictation_tool pyproject.toml` passes.
+- `ruff check dictation_tool tests pyproject.toml` passes.
 - `mypy dictation_tool` passes.
 - `pip check` passes.

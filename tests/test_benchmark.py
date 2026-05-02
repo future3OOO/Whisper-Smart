@@ -38,6 +38,7 @@ def test_summarize_latency_ms_reports_tail_metrics():
 
 def test_word_error_rate_scores_reference_against_candidate():
     assert word_error_rate("hello world", "hello world") == 0.0
+    assert word_error_rate("hello, world!", "hello world") == 0.0
     assert word_error_rate("hello brave world", "hello world") == 1 / 3
 
 

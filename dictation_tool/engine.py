@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from math import ceil
 
 import numpy as np
@@ -360,11 +360,12 @@ class DictationEngine:
             raise RuntimeError("transcription backend is not loaded")
 
         profile = str(self.cfg.profile) if self.cfg.profile else None
+        inference_audio = self._f32[:n].copy()
         with prof("infer", profile), timed("infer"):
             result = await asyncio.get_running_loop().run_in_executor(
                 self._model_pool,
                 self._backend.transcribe,
-                self._f32[:n],
+                inference_audio,
                 TranscriptionOptions(
                     language=self.cfg.language,
                     initial_prompt=self.cfg.initial_prompt or self._ctx.prompt(),
@@ -453,11 +454,17 @@ class DictationEngine:
                 LOGGER.warning("Mouse release ignored before event loop is ready")
                 return
             fut = asyncio.run_coroutine_threadsafe(self._flush_hold(), loop)
-            fut.add_done_callback(
-                lambda f: loop.call_soon_threadsafe(
-                    self._clip_q.put_nowait, f.result() or ""
-                )
-            )
+
+            def on_done(f: Future[str]) -> None:
+                try:
+                    text = f.result()
+                except Exception as exc:
+                    LOGGER.debug("Hold flush failed: %s", exc)
+                    return
+                if text:
+                    loop.call_soon_threadsafe(self._clip_q.put_nowait, text)
+
+            fut.add_done_callback(on_done)
         finally:
             if self._hold_timer:
                 self._hold_timer.cancel()

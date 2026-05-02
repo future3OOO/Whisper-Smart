@@ -153,7 +153,7 @@ def _build_cli() -> argparse.ArgumentParser:
     p.add_argument("--bench-reference", help="Reference transcript for WER scoring")
     p.add_argument("--bench-runs", type=int, default=1, help="Inference runs per model")
     p.add_argument(
-        "--bench", action="store_true", help="Run latency benchmark after exit"
+        "--bench", action="store_true", help="Run latency benchmark and exit"
     )
 
     # hidden tiny model flag for CI

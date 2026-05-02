@@ -80,7 +80,8 @@ class DictationPostProcessor:
 
     def clean_model_text(self, text: str) -> str:
         """Apply command, email, URL, sign-off, and line formatting rules."""
-        text = self._EMAIL_RE.sub(r"\1@\2.com", self._URL_DOT.sub(r"\1.\2", text))
+        text = self._EMAIL_RE.sub(r"\1@\2.com", text)
+        text = self._URL_DOT.sub(r"\1.\2", text)
         for pattern, replacement in self._CMD_SUBS:
             text = pattern.sub(replacement, text)
 

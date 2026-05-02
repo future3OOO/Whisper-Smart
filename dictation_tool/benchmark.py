@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import wave
 from collections.abc import Iterable
 from math import ceil
@@ -19,6 +20,7 @@ DEFAULT_MODEL_MATRIX = (
 )
 
 Int16Audio = NDArray[np.int16]
+TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)?")
 
 
 def parse_model_matrix(value: str | None) -> tuple[str, ...]:
@@ -80,8 +82,8 @@ def load_wav_mono_int16(path: Path, sample_rate: int) -> Int16Audio:
 
 def word_error_rate(reference: str, candidate: str) -> float:
     """Compute word error rate with a small Levenshtein distance implementation."""
-    ref = reference.lower().split()
-    hyp = candidate.lower().split()
+    ref = TOKEN_RE.findall(reference.lower())
+    hyp = TOKEN_RE.findall(candidate.lower())
     if not ref:
         return 0.0 if not hyp else 1.0
 

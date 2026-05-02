@@ -43,7 +43,10 @@ class TestConfig:
 
         # Retry logic settings
         assert cfg.enable_retry_logic is True
-        assert cfg.retry_temperatures == (0.0, 0.6)
+        expected_retry_temperatures = (
+            (0.0, 0.6) if cfg.device == "cuda" else (0.0, 0.4, 0.7)
+        )
+        assert cfg.retry_temperatures == expected_retry_temperatures
         assert cfg.max_retries == 3
         assert cfg.min_confidence_threshold == 0.6
 
@@ -130,6 +133,10 @@ class TestConfig:
         """Test that valid compute types are accepted."""
         cfg = Config(compute_type=compute_type)
         assert cfg.compute_type == compute_type
+
+    def test_config_rejects_invalid_vad_aggressiveness(self):
+        with pytest.raises(ValueError):
+            Config(vad_aggr=4)
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_config_device_validation(self, device):

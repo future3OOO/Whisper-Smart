@@ -20,6 +20,9 @@ class DummyBackend:
         # simple deterministic mapping: len(audio) → text digits
         return TranscriptionResult(text=str(len(audio)), avg_logprob=0.5)
 
+    def close(self) -> None:
+        return None
+
 
 audio_arrays = st.lists(
     st.integers(min_value=-32768, max_value=32767).map(
@@ -38,5 +41,10 @@ def test_transcribe_various(audio_arrays):
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    text = loop.run_until_complete(eng._transcribe(np.concatenate(audio_arrays)))
-    assert isinstance(text, str)
+    try:
+        text = loop.run_until_complete(eng._transcribe(np.concatenate(audio_arrays)))
+        assert isinstance(text, str)
+    finally:
+        eng.stop()
+        loop.close()
+        asyncio.set_event_loop(None)

@@ -113,7 +113,10 @@ class Config(BaseSettings):
     def _auto_vad(cls, v: int | str) -> int:
         if v == "auto":
             return 2
-        return int(v)
+        value = int(v)
+        if value not in (0, 1, 2, 3):
+            raise ValueError("vad_aggr must be 0-3 or 'auto'")
+        return value
 
     @field_validator("beam_size")
     @classmethod

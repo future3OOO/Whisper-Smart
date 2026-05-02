@@ -54,9 +54,10 @@ class TestAdvancedDictationEngine:
         assert not eng._raw_shadow
 
     # ── model-load path (GPU) ───────────────────────────────────
+    @patch("dictation_tool.engine.os.cpu_count", return_value=24)
     @patch("dictation_tool.engine.FasterWhisperBackend")
     @pytest.mark.asyncio
-    async def test_load_model_flash(self, mock_backend_cls):
+    async def test_load_model_flash(self, mock_backend_cls, _mock_cpu_count):
         backend = Mock()
         mock_backend_cls.return_value = backend
         cfg = Config(device="cuda", attention_backend="flash")
