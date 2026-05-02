@@ -76,8 +76,9 @@ Regroup rule: if a slice requires live GPU/model downloads or cannot be verified
 ## PRD Completion Status
 
 The PRD live-evaluation gate is complete on the target Windows RTX 3080 runtime.
-The default model is changed to `distil-large-v3` for English dictation based on
-the measured model matrix.
+The default model is changed to `large-v3-turbo` for English dictation: the
+measured matrix showed it is close to `distil-large-v3` latency, and live user
+dictation feedback showed better accuracy than `distil-large-v3`.
 
 Current evidence:
 
@@ -109,6 +110,9 @@ Live matrix results:
   `large-v3` p50 779.563 ms, p95 779.955 ms, RTF 14.144x, WER 0.1364.
 - Public JFK 11.000 s human speech fixture, model VAD disabled:
   `medium.en` p50 490.587 ms, p95 500.177 ms, RTF 22.358x, WER 0.1364.
+- Live dictation follow-up: `distil-large-v3` felt less accurate in real use,
+  while `large-v3-turbo` felt materially better and still very fast. This
+  supersedes the fixture-only default recommendation.
 - VAD comparison on the generated speech fixture showed disabling
   faster-whisper internal VAD slightly improved latency for top candidates
   without changing WER, so WebRTC VAD remains the live microphone segmentation

@@ -16,7 +16,7 @@ class TestConfig:
         cfg = Config()
 
         # Whisper settings
-        assert cfg.model_name == "distil-large-v3"
+        assert cfg.model_name == "large-v3-turbo"
         assert cfg.compute_type == "auto"
         assert cfg.device == "cuda"
         assert cfg.attention_backend == "flash"

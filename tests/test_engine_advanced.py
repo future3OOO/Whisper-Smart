@@ -65,7 +65,7 @@ class TestAdvancedDictationEngine:
         await eng._load_model()
 
         mock_backend_cls.assert_called_once_with(
-            model_name="distil-large-v3",
+            model_name="large-v3-turbo",
             device="cuda",
             compute_type="float16",
             cpu_threads=12,

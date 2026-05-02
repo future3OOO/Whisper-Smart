@@ -48,7 +48,7 @@ def _build_cli() -> argparse.ArgumentParser:
     )
 
     # Core
-    p.add_argument("--model", default="distil-large-v3", help="Whisper checkpoint")
+    p.add_argument("--model", default="large-v3-turbo", help="Whisper checkpoint")
     p.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     p.add_argument(
         "--compute",

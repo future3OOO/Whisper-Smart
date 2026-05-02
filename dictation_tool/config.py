@@ -41,7 +41,7 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DICT__", extra="forbid")
 
     # ============ Whisper ============ -----------------------------
-    model_name: str = Field("distil-large-v3", description="Whisper checkpoint")
+    model_name: str = Field("large-v3-turbo", description="Whisper checkpoint")
     compute_type: ComputeType = "auto"
     device: str = Field(
         default_factory=lambda: (

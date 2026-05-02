@@ -78,9 +78,9 @@ accurate when paired with a preset and a larger beam.
 
 #### ⚖️ Evidence-gated modern default
 
-The default model is now `distil-large-v3` for English dictation. On the
-RTX 3080 Windows/CUDA 12 test machine it was the fastest model in the live
-matrix and matched or beat the alternatives on the benchmark fixtures.
+The default model is now `large-v3-turbo` for English dictation. On the
+RTX 3080 Windows/CUDA 12 test machine it is nearly as fast as `distil-large-v3`
+on benchmark fixtures, and real dictation feedback showed better accuracy.
 
 ```powershell
 # Benchmark the current configured model only
@@ -99,8 +99,8 @@ python -m dictation_tool --device cuda --bench --bench-audio .\fixture.wav --pro
 python -m dictation_tool --device cuda --bench --bench-audio .\fixture.wav --bench-reference "known transcript" --no-model-vad
 ```
 
-Use `distil-large-v3` as the low-latency English default, `large-v3-turbo` as
-the balanced modern fallback, `large-v3` as the multilingual/accuracy baseline,
+Use `large-v3-turbo` as the balanced English default, `distil-large-v3` as the
+maximum-speed English option, `large-v3` as the multilingual/accuracy baseline,
 and `medium.en` as the legacy fast English baseline.
 
 ## 📧 Fast e-mail workflow — preset **email**

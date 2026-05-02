@@ -18,8 +18,9 @@ the project adheres to [Semantic Versioning](https://semver.org).
 ### Changed
 - `faster-whisper` runtime requirement now targets `>=1.2.1,<2` so modern
   Whisper-family models can be evaluated.
-- The default model is now `distil-large-v3` based on live RTX 3080 benchmark
-  evidence across generated and public speech fixtures.
+- The default model is now `large-v3-turbo`: benchmark evidence showed it is
+  close to `distil-large-v3` latency, and live dictation feedback showed better
+  accuracy.
 - `ctranslate2>=4.7.1,<5` is an explicit dependency and `setuptools<81` keeps
   the current `webrtcvad` import path working on fresh installs.
 
