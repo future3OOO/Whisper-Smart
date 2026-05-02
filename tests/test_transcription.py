@@ -44,14 +44,16 @@ def test_faster_whisper_backend_loads_model_with_runtime_config():
 
 def test_faster_whisper_backend_transcribes_with_options():
     seen = {}
-    segment = namedtuple("Segment", "text")
-    info = namedtuple("Info", "avg_logprob")
+    segment = namedtuple("Segment", "text avg_logprob")
 
     class Model:
         def transcribe(self, audio, **kwargs):
             seen["audio"] = audio
             seen["kwargs"] = kwargs
-            return [segment("hello "), segment("world")], info(avg_logprob=-0.2)
+            return [
+                segment("hello ", -0.2),
+                segment("world", -0.4),
+            ], object()
 
     backend = FasterWhisperBackend(
         model_name="large-v3",
@@ -75,7 +77,7 @@ def test_faster_whisper_backend_transcribes_with_options():
     )
 
     assert result.text == "hello world"
-    assert result.avg_logprob == -0.2
+    assert result.avg_logprob == pytest.approx(-0.3)
     np.testing.assert_array_equal(seen["audio"], audio)
     assert seen["kwargs"] == {
         "language": "en",

@@ -68,7 +68,7 @@ class FasterWhisperBackend:
         if self._model is None:
             raise RuntimeError("transcription backend is not loaded")
 
-        segs, info = self._model.transcribe(
+        segs, _info = self._model.transcribe(
             audio,
             language=options.language,
             initial_prompt=options.initial_prompt,
@@ -78,7 +78,12 @@ class FasterWhisperBackend:
             vad_filter=options.vad_filter,
             word_timestamps=False,
         )
+        segments = list(segs)
         return TranscriptionResult(
-            text="".join(segment.text for segment in segs).strip(),
-            avg_logprob=float(getattr(info, "avg_logprob", -1.0)),
+            text="".join(segment.text for segment in segments).strip(),
+            avg_logprob=float(
+                sum(segment.avg_logprob for segment in segments) / len(segments)
+                if segments
+                else -1.0
+            ),
         )
