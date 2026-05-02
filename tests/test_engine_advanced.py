@@ -70,7 +70,9 @@ class TestAdvancedDictationEngine:
 
         await eng._load_model()
 
-        mock_whisper_cls.assert_called_once_with("large-v3", device="cuda", compute_type="float16")
+        mock_whisper_cls.assert_called_once_with(
+            "large-v3", device="cuda", compute_type="float16"
+        )
         mock_torch_compile.assert_called_once()
         # Check that torch.compile was called with the original model
         assert mock_torch_compile.call_args.args[0] is original_model
@@ -99,7 +101,9 @@ class TestAdvancedDictationEngine:
     # ── adaptive transcription logic ────────────────────────────
     @pytest.mark.asyncio
     async def test_adaptive_retry(self, mock_whisper_model):
-        cfg = Config(device="cpu", attention_backend="none", retry_temperatures=(0.0, 0.4))
+        cfg = Config(
+            device="cpu", attention_backend="none", retry_temperatures=(0.0, 0.4)
+        )
         eng = DictationEngine(cfg)
         eng._model = mock_whisper_model
         text = await eng._transcribe(np.zeros(16000, dtype=np.int16))
@@ -157,6 +161,51 @@ class TestAdvancedDictationEngine:
 
         await eng._run()
         assert m_stream.call_args.kwargs["vad_gate"] is not None
+
+    @pytest.mark.asyncio
+    async def test_flush_hold_does_not_duplicate_vad_tail(self):
+        cfg = Config(device="cpu", attention_backend="none", use_vad=True)
+        eng = DictationEngine(cfg)
+        shadow = np.ones(1600, dtype=np.int16)
+        tail = np.ones(800, dtype=np.int16)
+        captured = {}
+
+        async def transcribe(audio):
+            captured["samples"] = audio.size
+            return "hello"
+
+        eng._raw_shadow.append(shadow)
+        eng._vad_gate = Mock(force_flush=Mock(return_value=tail))
+        eng._transcribe = AsyncMock(side_effect=transcribe)
+
+        assert await eng._flush_hold() == "hello"
+        assert captured["samples"] == shadow.size
+        eng._vad_gate.force_flush.assert_called_once()
+
+    @patch("dictation_tool.engine.AudioStream")
+    @pytest.mark.asyncio
+    async def test_hold_mode_does_not_transcribe_vad_batches_before_release(
+        self, m_stream
+    ):
+        cfg = Config(device="cpu", attention_backend="none", use_vad=True)
+        eng = DictationEngine(cfg)
+        eng._holding = True
+        eng._recording.set()
+        eng._transcribe = AsyncMock(return_value="should not paste")
+
+        stub = Mock()
+        stub.__aenter__ = AsyncMock(return_value=stub)
+        stub.__aexit__ = AsyncMock(return_value=None)
+
+        async def gen():
+            eng._terminate.set()
+            yield np.ones(1600, dtype=np.int16)
+
+        stub.chunks.return_value = gen()
+        m_stream.return_value = stub
+
+        await eng._run()
+        eng._transcribe.assert_not_called()
 
     @patch("dictation_tool.engine.AudioStream")
     @pytest.mark.asyncio

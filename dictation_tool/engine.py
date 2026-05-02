@@ -13,6 +13,7 @@ Key features
 • Extended punctuation map (“at sign” → @)
 • JSONL profiler, adaptive batching, back-pressure, dynamic ring growth
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -44,8 +45,8 @@ from .utils.profile import prof
 if sys.platform == "win32":
     try:
         import win32clipboard as _wc  # type: ignore
-        import win32con as _wcon      # type: ignore
-    except ImportError:               # pywin32 not installed
+        import win32con as _wcon  # type: ignore
+    except ImportError:  # pywin32 not installed
         _wc = _wcon = None
 else:
     _wc = _wcon = None
@@ -82,6 +83,7 @@ def _paste_retry() -> None:
             time.sleep(0.02)
     LOGGER.warning("Auto-paste ultimately failed")
 
+
 # ══════════════════════════════════ Audio ring buffer ═════════════════════════
 class _Ring:
     """Lock-free power-of-two ring for int16 audio."""
@@ -103,7 +105,7 @@ class _Ring:
         if not n:
             return
         cap = self._view.shape[0]
-        if n >= cap:                       # keep only the last <cap> samples
+        if n >= cap:  # keep only the last <cap> samples
             self._view[:] = chunk[-cap:]
             self._head = self._tail = 0
             self._full = True
@@ -134,7 +136,12 @@ class _Ring:
 
     @property
     def size(self) -> int:
-        return self._view.shape[0] if self._full else (self._head - self._tail) & self._mask
+        return (
+            self._view.shape[0]
+            if self._full
+            else (self._head - self._tail) & self._mask
+        )
+
 
 # ══════════════════════════════════ Punctuation map ═══════════════════════════
 class _Punct:
@@ -180,6 +187,7 @@ class _Punct:
         out = self._spc_after.sub(r"\1", out)
         return out.strip()
 
+
 # ═════════════════════════ Thread-safe context ════════════════════════════════
 class _Context:
     """Rolling prompt history (mutex-guarded)."""
@@ -198,6 +206,7 @@ class _Context:
         with self._lock:
             return " ".join(self._buf) + ". " if self._buf else ""
 
+
 # ═══════════════════ Adaptive batch controller ════════════════════════════════
 class _BatchCtl:
     def __init__(self, cfg: Config) -> None:
@@ -215,9 +224,13 @@ class _BatchCtl:
             avg = self._seen // self._chunks
             self.min_samples = max(8_000, min(int(avg * 0.8) // 16 * 16, 24_000))
             self.max_chunks = max(4, min(ceil(self.min_samples / avg), 10))
-            LOGGER.info("Adaptive batch tuned → %d samples | %d chunks",
-                        self.min_samples, self.max_chunks)
+            LOGGER.info(
+                "Adaptive batch tuned → %d samples | %d chunks",
+                self.min_samples,
+                self.max_chunks,
+            )
             self._lock = True
+
 
 # ═════════════════════ Clipboard wrapper class ════════════════════════════════
 class _Clipboard:
@@ -245,11 +258,16 @@ class _Clipboard:
             await loop.run_in_executor(self._pool, pyperclip.copy, text)
         self._last = (text, time.time())
 
+
 # ───────────────────────── command cleanup ──────────────────────────
 _CMD_SUBS: tuple[tuple[re.Pattern, str], ...] = (
     # single line break  – eat optional punctuation / spaces after the cue
-    (re.compile(r"\b(?:new\s+line|line\s*break|newline)\b[ \t]*[.,!?;:]?[ \t]*",
-                re.I), "\n"),
+    (
+        re.compile(
+            r"\b(?:new\s+line|line\s*break|newline)\b[ \t]*[.,!?;:]?[ \t]*", re.I
+        ),
+        "\n",
+    ),
     # blank line (paragraph) – same idea, but keep the double LF
     (re.compile(r"\bnew\s+paragraph\b[ \t]*[.,!?;:]?[ \t]*", re.I), "\n\n"),
     (re.compile(r"\bbullet\s+point\b", re.I), "\n• "),
@@ -257,7 +275,9 @@ _CMD_SUBS: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r'[\u201C\u201D"`\uFFFD]+'), ""),
 )
 
-_SPACES_AROUND_DOT_AT = re.compile(r"[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]*([@.])[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]*")
+_SPACES_AROUND_DOT_AT = re.compile(
+    r"[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]*([@.])[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]*"
+)
 
 _SIGNOFFS = ("kind regards", "best regards", "regards", "cheers")
 SIGNOFF_PAT = re.compile(
@@ -267,15 +287,17 @@ SIGNOFF_PAT = re.compile(
 
 # Greeting lines that should end with a comma before a blank line
 _GREETING_BREAK = re.compile(
-    r'(?i)(^|\n)(\s*(?:hi|hello|hey|kia(?:\s+ora)?|dear)\b[^\n]*?)\s*\n\n'
+    r"(?i)(^|\n)(\s*(?:hi|hello|hey|kia(?:\s+ora)?|dear)\b[^\n]*?)\s*\n\n"
 )
+
 
 # ══════════════════════════ Dictation Engine ══════════════════════════════════
 class DictationEngine:
     """Microphone → (VAD) → Whisper → clipboard."""
 
-    _EMAIL_RE = re.compile(r"\b([\w.-]+)\s+at(?:\s+sign)?\s+([\w.-]+)\s+dot\s+com\b",
-                          re.I)
+    _EMAIL_RE = re.compile(
+        r"\b([\w.-]+)\s+at(?:\s+sign)?\s+([\w.-]+)\s+dot\s+com\b", re.I
+    )
     _URL_DOT = re.compile(r"\b([a-zA-Z0-9_-]+)\s+\.\s+([a-zA-Z0-9_-]+)")
 
     # ───────────────────────── init ──────────────────────────
@@ -422,43 +444,43 @@ class DictationEngine:
         txt = self._EMAIL_RE.sub(r"\1@\2.com", self._URL_DOT.sub(r"\1.\2", txt))
         for pat, rep in _CMD_SUBS:
             txt = pat.sub(rep, txt)
-        
+
         # ── NEW: collapse duplicate commas (word "comma" + real comma) ─────────
-        txt = re.sub(r',\s*,+', ',', txt)
-        
+        txt = re.sub(r",\s*,+", ",", txt)
+
         # ── NEW: if a comma sneaks in *before* the paragraph break, make it a '.' ─
-        txt = re.sub(r',\s*\n\n', '.\n\n', txt)
-        
+        txt = re.sub(r",\s*\n\n", ".\n\n", txt)
+
         # ── turn greeting + blank line into "Greeting,<LF><LF>"
         txt = _GREETING_BREAK.sub(
             lambda m: f"{m.group(1)}{m.group(2).rstrip(' ,.!?;:')},\n\n",
             txt,
         )
-        
+
         # ── NEW: add full stop before paragraph break when *no* punctuation spoken ─
-        txt = re.sub(r'([^\s.,!?;:])\s*\n\n', r'\1.\n\n', txt)
-        
+        txt = re.sub(r"([^\s.,!?;:])\s*\n\n", r"\1.\n\n", txt)
+
         # final space trim around @ and .
-        txt = _SPACES_AROUND_DOT_AT.sub(r'\1', txt)
-        
+        txt = _SPACES_AROUND_DOT_AT.sub(r"\1", txt)
+
         # safety-pass: remove spaces or tabs (NOT new-lines) that may survive
-        txt = re.sub(r'@[ \t]+', '@', txt)   # john @ gmail → john@gmail
-        txt = re.sub(r'\.[ \t]+', '.', txt)  # gmail . com  → gmail.com
-        
+        txt = re.sub(r"@[ \t]+", "@", txt)  # john @ gmail → john@gmail
+        txt = re.sub(r"\.[ \t]+", ".", txt)  # gmail . com  → gmail.com
+
         # -------------------------------------------------------------------------
         # 8. sentence-/signature-polish  (run *after* all previous tweaks)
         # -------------------------------------------------------------------------
-        
+
         # 8-a  normalise common e-mail sign-offs
         txt = SIGNOFF_PAT.sub(lambda m: f"{m.group(1)}{m.group(2).title()},\n", txt)
-        
+
         # 8-b  capitalise first alphabetical char of every logical line
         txt = re.sub(
             r"(^|\n)([• \t]*)([a-z])",
             lambda m: m.group(1) + m.group(2) + m.group(3).upper(),
             txt,
         )
-        
+
         return txt
 
     # ──────────────────── shadow helper ──────────────────────
@@ -468,9 +490,8 @@ class DictationEngine:
     # ──────────────────── trigger install ─────────────────────
     def _install_triggers(self) -> None:
         def ok() -> bool:
-            return (
-                not self.cfg.dual_trigger_required
-                or (self._mouse_pressed and is_pressed(self.cfg.hotkey))
+            return not self.cfg.dual_trigger_required or (
+                self._mouse_pressed and is_pressed(self.cfg.hotkey)
             )
 
         def toggle(src: str) -> None:
@@ -498,7 +519,7 @@ class DictationEngine:
             if down:
                 self._mouse_pressed = True
                 if self.cfg.mouse_hold_to_record:
-                    self._raw_shadow.clear()     # start fresh
+                    self._raw_shadow.clear()  # start fresh
                     self._mouse_press = time.time()
                     self._holding = False
                     self._hold_timer = threading.Timer(
@@ -547,7 +568,9 @@ class DictationEngine:
             if self._raw_shadow:
                 segs.append(concatenate(self._raw_shadow))
                 self._raw_shadow.clear()
-            if self._vad_gate:
+                if self._vad_gate:
+                    self._vad_gate.force_flush()
+            elif self._vad_gate:
                 tail = self._vad_gate.force_flush()
                 if tail is not None and tail.size:
                     segs.append(tail)
@@ -590,10 +613,13 @@ class DictationEngine:
                     continue
 
                 if self._clip_q.qsize() > 8:
-                    await asyncio.sleep(0.02)   # back-pressure clipboard
+                    await asyncio.sleep(0.02)  # back-pressure clipboard
 
                 if self.cfg.use_vad:
                     if chunk.size:
+                        if self.cfg.mouse_hold_to_record and self._holding:
+                            continue
+
                         batch.append(chunk)
                         samples += chunk.size
                         self._batch_ctl.feed(chunk.size)
