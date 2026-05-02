@@ -73,8 +73,35 @@ Latency ≈ 200-500 ms on an RTX 3080. Designed for 20-30 s dictation bursts.
 
 #### 💨 Option B — Maximum speed (medium.en + prompt tricks)
 
-medium.en delivers ≈ 5-20 ms interface latency while staying surprisingly
-accurate when paired with a good prompt and a larger beam.
+medium.en delivers ≈ 5-200 ms interface latency while staying surprisingly
+accurate when paired with a preset and a larger beam.
+
+#### ⚖️ Evidence-gated modern default
+
+The default model is now `large-v3-turbo` for English dictation. On the
+RTX 3080 Windows/CUDA 12 test machine it is nearly as fast as `distil-large-v3`
+on benchmark fixtures, and real dictation feedback showed better accuracy.
+
+```powershell
+# Benchmark the current configured model only
+python -m dictation_tool --device cuda --bench
+
+# Compare the recommended model matrix
+python -m dictation_tool --device cuda --bench --bench-models default --bench-runs 3
+
+# Compare a custom pair
+python -m dictation_tool --device cuda --bench --bench-models large-v3-turbo,distil-large-v3
+
+# Benchmark a WAV fixture and emit JSONL timings
+python -m dictation_tool --device cuda --bench --bench-audio .\fixture.wav --profile .\benchmark.jsonl
+
+# Score a known transcript and compare without faster-whisper internal VAD
+python -m dictation_tool --device cuda --bench --bench-audio .\fixture.wav --bench-reference "known transcript" --no-model-vad
+```
+
+Use `large-v3-turbo` as the balanced English default, `distil-large-v3` as the
+maximum-speed English option, `large-v3` as the multilingual/accuracy baseline,
+and `medium.en` as the legacy fast English baseline.
 
 ## 📧 Fast e-mail workflow — preset **email**
 
@@ -152,9 +179,9 @@ Larger beam sizes (e.g. 6-8) are supported but add latency.
 
 | Goal | Flag | Example (PowerShell) |
 |------|------|---------------------|
-| Disable VAD for long monologues | `--no-vad` | ... --no-vad --max-buffer-seconds 30 |
+| Disable VAD for long monologues | `--no-vad` | ... --no-vad --max-buffer-s 30 |
 | Tolerate longer pauses | `--vad-aggr` | --vad-aggr 1 (0 =tolerant … 3 =strict) |
-| Copy without pasting | `--manual-paste` | ... --manual-paste |
+| Copy without pasting | `--copy-only` | ... --copy-only |
 | Change mouse trigger | `--mouse-btn` | --mouse-btn middle |
 | Use hotkey only (no mouse) | `--no-mouse` | ... --no-mouse |
 
@@ -170,6 +197,9 @@ python -m dictation_tool --help
 dictation_tool/
 ├─ __main__.py     # CLI entry-point
 ├─ engine.py       # DictationEngine core
+├─ transcription.py # faster-whisper backend adapter
+├─ postprocess.py   # deterministic transcript formatting
+├─ benchmark.py     # benchmark matrix and accuracy helpers
 ├─ io.py           # Audio + VAD helpers
 └─ …               # More modules
  tests/

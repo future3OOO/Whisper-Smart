@@ -1,5 +1,10 @@
 from __future__ import annotations
-import json, time, pathlib, threading
+
+import json
+import pathlib
+import threading
+import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 _lock = threading.Lock()
@@ -7,7 +12,7 @@ _now = time.perf_counter
 
 
 @contextmanager
-def prof(label: str, path: str | None):
+def prof(label: str, path: str | None) -> Iterator[None]:
     """Write {ts, label, ms} to JSONL path (if given)."""
     if not path:
         yield

@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # High-level “initial_prompt” snippets injected into Whisper to bias spelling,
 # e-mail formatting, technical terms, etc.  The {terms} placeholder lets the
-# CLI / GUI pass extra vocabulary at runtime – but every preset already lists
+# CLI / GUI pass extra vocabulary at runtime - but every preset already lists
 # sane defaults so you can call them verbatim.
 # ---------------------------------------------------------------------------
 
@@ -59,5 +59,4 @@ PRESETS: dict[str, tuple[str, str]] = {
         "and use correct punctuation. Vocabulary: {terms}.",
         "Dear,Hi team,Kind regards,Best regards,McKenzie,@,gmail.com,cc,bcc",
     ),
-
 }

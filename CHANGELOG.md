@@ -4,7 +4,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
 the project adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
-*(no changes yet)*
+
+### Added
+- CLI benchmark matrix support via `--bench-models` with candidates for
+  `large-v3`, `medium.en`, `large-v3-turbo`, and `distil-large-v3`.
+- Real-audio benchmark support via `--bench-audio`, `--bench-reference`,
+  `--bench-runs`, and structured JSON output for latency/WER comparisons.
+- `--no-model-vad` for comparing faster-whisper internal VAD ownership.
+- JSONL profiling can be enabled from the CLI with `--profile`.
+- Transcription backend adapter, benchmark helpers, WER scoring, and
+  deterministic post-processing golden tests.
+
+### Changed
+- `faster-whisper` runtime requirement now targets `>=1.2.1,<2` so modern
+  Whisper-family models can be evaluated.
+- The default model is now `large-v3-turbo`: benchmark evidence showed it is
+  close to `distil-large-v3` latency, and live dictation feedback showed better
+  accuracy.
+- `ctranslate2>=4.7.1,<5` is an explicit dependency and `setuptools<81` keeps
+  the current `webrtcvad` import path working on fresh installs.
+
+### Fixed
+- No-VAD ring buffer works under the current NumPy stack and returns full
+  buffers correctly.
+- CLI wiring now applies `--chunk-ms` and benchmark mode no longer starts live
+  dictation before measuring.
+- Spoken bullet cues now produce compact bullet lines without extra blank lines
+  or trailing spaces.
+- Faster-whisper models are loaded, used, and closed on a dedicated single
+  model thread to avoid native CUDA/CTranslate2 teardown crashes on Windows.
 
 
 ## [1.3.0] – 2025-06-09

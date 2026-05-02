@@ -9,8 +9,10 @@ dynamic = ["version"]
 dependencies = [
     "numpy",
     "pyperclip",
+    "setuptools<81",
     "torch",
-    "faster-whisper==1.1.1",
+    "ctranslate2>=4.7.1,<5",
+    "faster-whisper>=1.2.1,<2",
     "keyboard",
     "pynput",
     "sounddevice",
@@ -29,8 +31,15 @@ path = "dictation_tool/__init__.py"
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "C4", "B", "A", "RUF"]
 ignore = ["B008"] # opinionated: B008 Do not perform function calls in argument defaults
 
 [tool.ruff.lint.isort]
 known-first-party = ["dictation_tool"]
+
+[tool.pytest.ini_options]
+markers = [
+    "gpu: tests that require a CUDA-capable GPU",
+]
