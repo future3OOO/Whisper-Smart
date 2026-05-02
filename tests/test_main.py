@@ -172,12 +172,48 @@ class TestMainModule:
 
             args_used = mock_engine_class.call_args[0][0]
             assert args_used.mouse_btn == expected
-            assert args_used.enable_mouse_trigger is False
+            assert args_used.enable_mouse_trigger is True
+
+    @pytest.mark.parametrize(
+        "trigger_args,expected",
+        [([], True), (["--mouse"], True), (["--no-mouse"], False)],
+    )
+    @mock.patch("dictation_tool.__main__.asyncio.run")
+    @mock.patch("dictation_tool.__main__.DictationEngine")
+    def test_mouse_trigger_default_and_overrides(
+        self, mock_engine_class, mock_run, trigger_args, expected
+    ):
+        with mock.patch("sys.argv", ["dictation_tool", *trigger_args]):
+            mock_engine = mock.MagicMock()
+            mock_engine_class.return_value = mock_engine
+
+            __main__.main()
+
+            args_used = mock_engine_class.call_args[0][0]
+            assert args_used.enable_mouse_trigger is expected
 
     @mock.patch("dictation_tool.__main__.asyncio.run")
     @mock.patch("dictation_tool.__main__.DictationEngine")
-    def test_mouse_trigger_opt_in(self, mock_engine_class, mock_run):
-        with mock.patch("sys.argv", ["dictation_tool", "--mouse"]):
+    def test_email_autopaste_keeps_default_mouse_hold_workflow(
+        self, mock_engine_class, mock_run
+    ):
+        with mock.patch(
+            "sys.argv",
+            [
+                "dictation_tool",
+                "--device",
+                "cpu",
+                "--model",
+                "large-v3-turbo",
+                "--preset",
+                "email",
+                "--beam-size",
+                "5",
+                "--language",
+                "en",
+                "--auto-paste",
+            ],
+        ):
             mock_engine = mock.MagicMock()
             mock_engine_class.return_value = mock_engine
 
@@ -185,6 +221,9 @@ class TestMainModule:
 
             args_used = mock_engine_class.call_args[0][0]
             assert args_used.enable_mouse_trigger is True
+            assert args_used.mouse_btn == "middle"
+            assert args_used.mouse_hold_to_record is True
+            assert args_used.auto_paste_on_release is True
 
     @mock.patch("dictation_tool.__main__.asyncio.run")
     @mock.patch("dictation_tool.__main__.DictationEngine")

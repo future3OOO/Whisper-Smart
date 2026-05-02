@@ -109,7 +109,7 @@ def _build_cli() -> argparse.ArgumentParser:
     g_trig.add_argument(
         "--mouse-btn", choices=("left", "right", "middle"), default="middle"
     )
-    g_trig.set_defaults(enable_mouse_trigger=False)
+    g_trig.set_defaults(enable_mouse_trigger=True)
     g_trig.add_argument("--mouse", dest="enable_mouse_trigger", action="store_true")
     g_trig.add_argument("--no-mouse", dest="enable_mouse_trigger", action="store_false")
     g_trig.add_argument("--dual-trigger-required", action="store_true")
