@@ -556,7 +556,7 @@ class DictationEngine:
             latencies.append((time.perf_counter() - infer_start) * 1_000)
 
         inference_ms = latencies[-1]
-        infer_seconds = sum(latencies) / 1_000 / len(latencies)
+        infer_seconds = inference_ms / 1_000
         real_time_factor = (
             audio_seconds / infer_seconds if infer_seconds else float("inf")
         )
@@ -623,6 +623,8 @@ class DictationEngine:
                 if self.cfg.use_vad:
                     if chunk.size:
                         if self.cfg.mouse_hold_to_record and self._holding:
+                            batch.clear()
+                            samples = 0
                             continue
 
                         batch.append(chunk)

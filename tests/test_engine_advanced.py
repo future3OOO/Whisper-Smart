@@ -126,6 +126,20 @@ class TestAdvancedDictationEngine:
         audio = np.ones(8000, dtype=np.int16) * 1000
         assert await eng._transcribe(audio) == "Ok"
 
+    @pytest.mark.asyncio
+    async def test_benchmark_rtf_uses_reported_inference_latency(self, monkeypatch):
+        cfg = Config(device="cpu", attention_backend="none")
+        eng = DictationEngine(cfg)
+        eng._backend = Mock()
+        eng._transcribe = AsyncMock(return_value="hello")
+        times = iter([0.0, 0.0, 0.0, 0.1, 0.1, 0.3])
+        monkeypatch.setattr(engine_module.time, "perf_counter", lambda: next(times))
+
+        result = await eng.run_benchmark(audio=np.ones(16000, dtype=np.int16), runs=2)
+
+        assert result["inference_ms"] == 200.0
+        assert result["real_time_factor"] == 5.0
+
     # ── flush path & clipboard ─────────────────────────────────
     @patch("dictation_tool.engine._paste_retry")
     @pytest.mark.asyncio
@@ -240,6 +254,40 @@ class TestAdvancedDictationEngine:
 
         await eng._run()
         eng._transcribe.assert_not_called()
+
+    @patch("dictation_tool.engine.AudioStream")
+    @pytest.mark.asyncio
+    async def test_hold_mode_clears_stale_vad_batch_before_resume(self, m_stream):
+        cfg = Config(device="cpu", attention_backend="none", use_vad=True)
+        eng = DictationEngine(cfg)
+        eng._recording.set()
+        eng._batch_ctl.min_samples = 4
+        eng._batch_ctl.max_chunks = 3
+        captured = []
+
+        async def transcribe(audio):
+            captured.append(audio.copy())
+            return "after hold"
+
+        stub = Mock()
+        stub.__aenter__ = AsyncMock(return_value=stub)
+        stub.__aexit__ = AsyncMock(return_value=None)
+
+        async def gen():
+            yield np.array([1, 1], dtype=np.int16)
+            eng._holding = True
+            yield np.array([2, 2], dtype=np.int16)
+            eng._holding = False
+            yield np.array([3, 3], dtype=np.int16)
+            eng._terminate.set()
+
+        stub.chunks.return_value = gen()
+        m_stream.return_value = stub
+        eng._transcribe = AsyncMock(side_effect=transcribe)
+
+        await eng._run()
+        assert len(captured) == 1
+        np.testing.assert_array_equal(captured[0], np.array([3, 3], dtype=np.int16))
 
     @patch("dictation_tool.engine.AudioStream")
     @pytest.mark.asyncio
