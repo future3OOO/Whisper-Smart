@@ -73,8 +73,8 @@ Latency ≈ 200-500 ms on an RTX 3080. Designed for 20-30 s dictation bursts.
 
 #### 💨 Option B — Maximum speed (medium.en + prompt tricks)
 
-medium.en delivers ≈ 5-20 ms interface latency while staying surprisingly
-accurate when paired with a good prompt and a larger beam.
+medium.en delivers ≈ 5-200 ms interface latency while staying surprisingly
+accurate when paired with a preset and a larger beam.
 
 ## 📧 Fast e-mail workflow — preset **email**
 

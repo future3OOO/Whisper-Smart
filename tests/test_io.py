@@ -16,29 +16,46 @@ class TestVADGate:
 
     def test_vadgate_initialization(self):
         """Test VADGate initialization with various parameters."""
-        vad = VADGate(sample_rate=16000, aggressiveness=2, padding_ms=200)
+        vad = VADGate(
+            sample_rate=16000,
+            aggressiveness=2,
+            frame_duration_ms=30,
+            pre_buffer_chunks=10,
+            post_buffer_chunks=5,
+        )
 
         assert vad.sr == 16000
-        assert vad.frame_len == 30
+        assert vad.frame_duration_ms == 30
         assert vad.bytes_per_frame == 960  # 16000 * 30 / 1000 * 2
-        assert vad.padding_frames == 6  # 200 / 30
-        assert vad.ring.maxlen == 6
+        assert vad.pre_buffer_chunks == 10
+        assert vad.post_buffer_chunks == 5
+        assert vad.pre_buffer.maxlen == 10
+        assert vad.post_buffer.maxlen == 5
 
     @given(
         sample_rate=st.integers(min_value=8000, max_value=48000),
         aggressiveness=st.integers(min_value=0, max_value=3),
-        padding_ms=st.integers(min_value=0, max_value=1000),
+        pre_buffer_chunks=st.integers(min_value=1, max_value=20),
+        post_buffer_chunks=st.integers(min_value=1, max_value=10),
     )
-    def test_vadgate_parameter_validation(self, sample_rate, aggressiveness, padding_ms):
+    def test_vadgate_parameter_validation(
+        self, sample_rate, aggressiveness, pre_buffer_chunks, post_buffer_chunks
+    ):
         """Property-based test for VADGate parameter validation."""
-        vad = VADGate(sample_rate=sample_rate, aggressiveness=aggressiveness, padding_ms=padding_ms)
+        vad = VADGate(
+            sample_rate=sample_rate,
+            aggressiveness=aggressiveness,
+            frame_duration_ms=30,
+            pre_buffer_chunks=pre_buffer_chunks,
+            post_buffer_chunks=post_buffer_chunks,
+        )
 
         assert vad.sr == sample_rate
-        assert vad.frame_len == 30  # Fixed frame length
+        assert vad.frame_duration_ms == 30
         expected_bytes = sample_rate * 30 // 1000 * 2  # int16 = 2 bytes
         assert vad.bytes_per_frame == expected_bytes
-        expected_frames = padding_ms // 30
-        assert vad.padding_frames == expected_frames
+        assert vad.pre_buffer_chunks == pre_buffer_chunks
+        assert vad.post_buffer_chunks == post_buffer_chunks
 
     @patch("dictation_tool.io.webrtcvad.Vad")
     def test_vadgate_speech_detection(self, mock_vad_class):
@@ -46,7 +63,7 @@ class TestVADGate:
         mock_vad = Mock()
         mock_vad_class.return_value = mock_vad
 
-        vad_gate = VADGate(sample_rate=16000, aggressiveness=2, padding_ms=200)
+        vad_gate = VADGate(sample_rate=16000, aggressiveness=2)
 
         # Test speech detection
         mock_vad.is_speech.return_value = True
@@ -64,7 +81,7 @@ class TestVADGate:
         mock_vad = Mock()
         mock_vad_class.return_value = mock_vad
 
-        vad_gate = VADGate(sample_rate=16000, aggressiveness=2, padding_ms=200)
+        vad_gate = VADGate(sample_rate=16000, aggressiveness=2)
 
         # Test no speech detection
         mock_vad.is_speech.return_value = False
@@ -75,8 +92,8 @@ class TestVADGate:
         # Should not yield when no speech detected
         assert len(result) == 0
 
-        # Frames should be buffered in ring
-        assert len(vad_gate.ring) >= 0
+        # Frames should be buffered before speech starts.
+        assert len(vad_gate.pre_buffer) >= 0
 
 
 class TestAudioStream:
@@ -144,6 +161,42 @@ class TestAudioStream:
             # Should handle queue full gracefully
             stream._callback(indata, 2, Mock(), Mock())
             # No exception should be raised
+
+    def test_explicit_input_device_does_not_fall_back_to_other_devices(self):
+        """Explicit device selection should fail closed rather than record elsewhere."""
+        stream = AudioStream(16000, 20, input_device=7)
+
+        with (
+            patch("dictation_tool.io.platform.system", return_value="Windows"),
+            patch.object(stream, "_all_input_devices", return_value=[1, 2, 7]),
+        ):
+            assert stream._build_device_candidates(7) == [7]
+
+    def test_default_windows_input_can_fall_back_to_available_devices(self):
+        """Default input may try other Windows devices for portability."""
+        stream = AudioStream(16000, 20)
+
+        with (
+            patch("dictation_tool.io.platform.system", return_value="Windows"),
+            patch("dictation_tool.io.sd.default.device", (3, None)),
+            patch.object(stream, "_all_input_devices", return_value=[1, 3, 5]),
+        ):
+            assert stream._build_device_candidates(None) == [None, 1, 3, 5]
+
+    def test_callback_resamples_to_target_frame_count(self):
+        """Native-rate fallback still emits target-rate mono int16 chunks."""
+        raw_chunks = []
+        stream = AudioStream(16000, 10, on_raw_chunk=raw_chunks.append)
+        stream._setup_resampler(native_sr=48000, native_frames=480)
+        native_chunk = np.arange(480, dtype=np.int16).reshape(-1, 1)
+
+        stream._callback(native_chunk, 480, None, None)
+
+        queued = stream._q.get_nowait()
+        assert queued.shape == (160, 1)
+        assert queued.dtype == np.int16
+        assert len(raw_chunks) == 1
+        np.testing.assert_array_equal(raw_chunks[0], queued)
 
     @pytest.mark.asyncio
     async def test_chunks_without_vad(self):
@@ -262,9 +315,9 @@ class TestConcatenateFunction:
 
     @given(
         arrays=st.lists(
-            st.lists(st.integers(min_value=-32768, max_value=32767), min_size=1, max_size=100).map(
-                lambda x: np.array(x, dtype=np.int16)
-            ),
+            st.lists(
+                st.integers(min_value=-32768, max_value=32767), min_size=1, max_size=100
+            ).map(lambda x: np.array(x, dtype=np.int16)),
             min_size=1,
             max_size=10,
         )
