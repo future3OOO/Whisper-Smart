@@ -8,6 +8,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from dictation_tool import io as io_module
 from dictation_tool.io import AudioStream, VADGate, concatenate
 
 
@@ -197,6 +198,35 @@ class TestAudioStream:
         assert queued.dtype == np.int16
         assert len(raw_chunks) == 1
         np.testing.assert_array_equal(raw_chunks[0], queued)
+
+    def test_resample_fallback_emits_full_vad_frame_when_vad_enabled(self):
+        """Native-rate fallback should not feed sub-frame chunks into VAD."""
+        vad = VADGate(sample_rate=16000, aggressiveness=2, frame_duration_ms=30)
+        stream = AudioStream(16000, 10, vad_gate=vad)
+        native_stream = Mock()
+
+        with (
+            patch.object(stream, "_build_device_candidates", return_value=[None]),
+            patch.object(stream, "_device_native_sr", return_value=48000),
+            patch.object(
+                stream,
+                "_try_open",
+                side_effect=[
+                    io_module.sd.PortAudioError("target failed"),
+                    native_stream,
+                ],
+            ) as try_open,
+        ):
+            assert stream._open_stream(None) is native_stream
+
+        native_frames = try_open.call_args_list[1].kwargs["blocksize"]
+        native_chunk = np.zeros((native_frames, 1), dtype=np.int16)
+
+        stream._callback(native_chunk, native_frames, None, None)
+
+        queued = stream._q.get_nowait()
+        list(vad(queued))
+        assert vad.get_statistics()["frames_processed"] == 1
 
     @pytest.mark.asyncio
     async def test_chunks_without_vad(self):

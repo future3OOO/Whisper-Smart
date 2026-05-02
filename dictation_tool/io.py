@@ -276,6 +276,11 @@ class AudioStream:
                 continue
             try:
                 native_frames = int(native_sr * self._chunk_ms / 1000)
+                if self._gate is not None:
+                    native_frames = max(
+                        native_frames,
+                        int(native_sr * self._gate.frame_duration_ms / 1000),
+                    )
                 stream = self._try_open(dev, native_sr, blocksize=native_frames)
                 self._setup_resampler(native_sr, native_frames)
                 self._log_mic(dev, native_sr, resample=True)
@@ -329,7 +334,7 @@ class AudioStream:
         return candidates
 
     def _setup_resampler(self, native_sr: int, native_frames: int) -> None:
-        target_frames = int(self._sr * self._chunk_ms / 1000)
+        target_frames = int(native_frames * self._sr / native_sr)
         self._native_sr = native_sr
         self._resample_idx = np.linspace(
             0, native_frames - 1, target_frames, dtype=np.float64

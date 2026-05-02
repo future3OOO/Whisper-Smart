@@ -465,17 +465,24 @@ class DictationEngine:
 
     def _hold_start(self) -> None:
         self._holding = True
-        self._recording.set()
+        loop = self._loop
+        if loop is None:
+            self._recording.set()
+        else:
+            loop.call_soon_threadsafe(self._recording.set)
         LOGGER.info("▶️ Recording started (mouse hold)")
 
     def _hold_stop(self) -> None:
         try:
             if not self._holding:
                 return
-            self._recording.clear()
+            loop = self._loop
+            if loop is None:
+                self._recording.clear()
+            else:
+                loop.call_soon_threadsafe(self._recording.clear)
             self._holding = False
             LOGGER.info("⏸️ Stopped (mouse release)")
-            loop = self._loop
             if loop is None:
                 LOGGER.warning("Mouse release ignored before event loop is ready")
                 return

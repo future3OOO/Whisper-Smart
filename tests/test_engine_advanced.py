@@ -101,6 +101,36 @@ class TestAdvancedDictationEngine:
         m_hotkey.assert_called_once_with("ctrl+space", ANY)
         m_listener.assert_called_once()
 
+    def test_mouse_hold_recording_event_mutations_use_loop_threadsafe(self):
+        cfg = Config(device="cpu", attention_backend="none", mouse_hold_to_record=True)
+        eng = DictationEngine(cfg)
+        loop = Mock()
+        recording = Mock()
+        eng._loop = loop
+        eng._recording = recording
+
+        eng._hold_start()
+
+        loop.call_soon_threadsafe.assert_called_once_with(recording.set)
+        recording.set.assert_not_called()
+
+        future = Mock()
+
+        def fake_run_coroutine_threadsafe(coro, call_loop):
+            coro.close()
+            assert call_loop is loop
+            return future
+
+        with patch(
+            "dictation_tool.engine.asyncio.run_coroutine_threadsafe",
+            side_effect=fake_run_coroutine_threadsafe,
+        ):
+            eng._hold_stop()
+
+        loop.call_soon_threadsafe.assert_any_call(recording.clear)
+        recording.clear.assert_not_called()
+        future.add_done_callback.assert_called_once()
+
     # ── transcription logic ─────────────────────────────────────
     @pytest.mark.asyncio
     async def test_transcription_returns_model_text(self, mock_backend):
