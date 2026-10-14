@@ -15,6 +15,76 @@ from dictation_tool.io import AudioStream, VADGate, concatenate
 class TestVADGate:
     """Test suite for VADGate voice activity detection."""
 
+    @patch("dictation_tool.io.webrtcvad.Vad")
+    def test_partial_chunks_preserve_complete_speech_frame(self, mock_vad_class):
+        mock_vad_class.return_value.is_speech.return_value = True
+        gate = VADGate(16000, 2, consecutive_speech_frames=1)
+        audio = np.arange(480, dtype=np.int16)
+
+        for chunk in np.split(audio, 3):
+            assert list(gate(chunk)) == []
+
+        assert gate.get_statistics()["frames_processed"] == 1
+        np.testing.assert_array_equal(gate.force_flush(), audio)
+
+    @patch("dictation_tool.io.webrtcvad.Vad")
+    def test_fractional_resampled_chunks_preserve_sequence(self, mock_vad_class):
+        mock_vad_class.return_value.is_speech.return_value = True
+        gate = VADGate(16000, 2, consecutive_speech_frames=1)
+        audio = np.arange(960, dtype=np.int16)
+
+        for chunk in (audio[:479], audio[479:958], audio[958:]):
+            assert list(gate(chunk)) == []
+
+        assert gate.get_statistics()["frames_processed"] == 2
+        np.testing.assert_array_equal(gate.force_flush(), audio)
+
+    @pytest.mark.parametrize("speech", [True, False])
+    @patch("dictation_tool.io.webrtcvad.Vad")
+    def test_force_flush_ends_partial_frame_session(self, mock_vad_class, speech):
+        mock_vad_class.return_value.is_speech.return_value = speech
+        gate = VADGate(16000, 2, consecutive_speech_frames=1)
+        audio = np.arange(640, dtype=np.int16)
+        assert list(gate(audio)) == []
+
+        flushed = gate.force_flush()
+        if speech:
+            np.testing.assert_array_equal(flushed, audio)
+        else:
+            assert flushed is None
+
+        assert list(gate(np.ones(320, dtype=np.int16))) == []
+        assert gate.get_statistics()["frames_processed"] == 1
+
+    @patch("dictation_tool.io.webrtcvad.Vad")
+    def test_reset_discards_partial_frame_from_previous_session(self, mock_vad_class):
+        mock_vad_class.return_value.is_speech.return_value = True
+        gate = VADGate(16000, 2, consecutive_speech_frames=1)
+        assert list(gate(np.zeros(160, dtype=np.int16))) == []
+        gate.reset()
+
+        audio = np.arange(480, dtype=np.int16)
+        assert list(gate(audio[:320])) == []
+        assert gate.get_statistics()["frames_processed"] == 0
+        assert list(gate(audio[320:])) == []
+        np.testing.assert_array_equal(gate.force_flush(), audio)
+
+    @patch("dictation_tool.io.webrtcvad.Vad")
+    def test_utterance_boundary_preserves_later_frames_and_partial_tail(
+        self, mock_vad_class
+    ):
+        mock_vad_class.return_value.is_speech.side_effect = [True, False, True]
+        gate = VADGate(
+            16000, 2, consecutive_speech_frames=1, consecutive_silence_frames=1
+        )
+        audio = np.arange(1600, dtype=np.int16)
+
+        segments = list(gate(audio))
+
+        assert len(segments) == 1
+        np.testing.assert_array_equal(segments[0], audio[:960])
+        np.testing.assert_array_equal(gate.force_flush(), audio[960:])
+
     def test_vadgate_initialization(self):
         """Test VADGate initialization with various parameters."""
         vad = VADGate(
@@ -199,34 +269,36 @@ class TestAudioStream:
         assert len(raw_chunks) == 1
         np.testing.assert_array_equal(raw_chunks[0], queued)
 
-    def test_resample_fallback_emits_full_vad_frame_when_vad_enabled(self):
-        """Native-rate fallback should not feed sub-frame chunks into VAD."""
+    @pytest.mark.parametrize("native_sr", [16000, 22050, 44100, 48000])
+    def test_device_callbacks_preserve_vad_frames_at_native_rate(self, native_sr):
+        """Direct and resampled callbacks must preserve partial VAD frames."""
         vad = VADGate(sample_rate=16000, aggressiveness=2, frame_duration_ms=30)
         stream = AudioStream(16000, 10, vad_gate=vad)
         native_stream = Mock()
 
         with (
             patch.object(stream, "_build_device_candidates", return_value=[None]),
-            patch.object(stream, "_device_native_sr", return_value=48000),
+            patch.object(stream, "_device_native_sr", return_value=native_sr),
             patch.object(
                 stream,
                 "_try_open",
-                side_effect=[
-                    io_module.sd.PortAudioError("target failed"),
-                    native_stream,
-                ],
+                side_effect=(
+                    [native_stream]
+                    if native_sr == 16000
+                    else [io_module.sd.PortAudioError("target failed"), native_stream]
+                ),
             ) as try_open,
         ):
             assert stream._open_stream(None) is native_stream
 
-        native_frames = try_open.call_args_list[1].kwargs["blocksize"]
+        native_frames = try_open.call_args.kwargs.get("blocksize", stream._frames)
         native_chunk = np.zeros((native_frames, 1), dtype=np.int16)
 
-        stream._callback(native_chunk, native_frames, None, None)
-
-        queued = stream._q.get_nowait()
-        list(vad(queued))
-        assert vad.get_statistics()["frames_processed"] == 1
+        for _ in range(3):
+            stream._callback(native_chunk, native_frames, None, None)
+            queued = stream._q.get_nowait()
+            list(vad(queued))
+        assert vad.get_statistics()["frames_processed"] == queued.size * 3 // 480
 
     @pytest.mark.asyncio
     async def test_chunks_without_vad(self):

@@ -127,3 +127,28 @@ Live matrix results:
 - `ruff check dictation_tool tests pyproject.toml` passes.
 - `mypy dictation_tool` passes.
 - `pip check` passes.
+
+## Idle Memory Remediation — 2026-10-14
+
+- [x] Reproduce and fix unbounded paused shadow-audio retention through the
+  microphone callback. At 16 kHz, retained raw PCM alone grew by 115.2 MB/hour.
+- [x] Preserve mouse-press pre-roll and complete active recordings.
+- [x] Use one CTranslate2 worker for the single inference thread.
+- [x] Remove unnecessary PyTorch imports/tuning and validate a separate
+  Torch-free runtime with native NVIDIA libraries.
+- [x] Preserve `large-v3-turbo`, beam five, English, email preset, hotkeys,
+  clipboard behavior, startup warmup and model-thread ownership.
+- [x] Reproduce and resolve Cubic's remaining VAD framing, sentence spacing
+  and Unicode WER findings. Segment confidence was already resolved.
+- [x] Run 149 non-GPU tests, three real GPU smoke tests, Ruff, Black, mypy and
+  dependency checks successfully.
+- [ ] Activate the replacement runtime after the operator permits the brief
+  dictation interruption; the existing running app is unchanged.
+
+Fresh-process model-load and warmup measurements on the same RTX 3080:
+original checkout/runtime 3.509 GiB committed; corrected Torch-free runtime
+3.120 GiB committed. Both used `large-v3-turbo`, float16 and beam five. The
+replacement environment uses CTranslate2 4.8.3 and faster-whisper 1.2.1;
+the original uses CTranslate2 4.7.1. This is a measured runtime comparison,
+not an attribution of all saved bytes to one library. The avoided idle-audio
+growth is a separate reproduced defect, not included in that startup saving.

@@ -63,6 +63,9 @@ class DictationPostProcessor:
         r"([@.])"
         r"[\t \u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]*"
     )
+    _EMAIL_SPACING: ClassVar[re.Pattern[str]] = re.compile(
+        r"\b[\w.%+-]+[^\S\r\n]*@[^\S\r\n]*[\w-]+(?:\.[\w-]+)+\b"
+    )
     _SIGNOFFS: ClassVar[tuple[str, ...]] = (
         "kind regards",
         "best regards",
@@ -107,9 +110,10 @@ class DictationPostProcessor:
             text,
         )
         text = re.sub(r"([^\s.,!?;:])\s*\n\n", r"\1.\n\n", text)
-        text = self._SPACES_AROUND_DOT_AT.sub(r"\1", text)
+        text = self._EMAIL_SPACING.sub(
+            lambda match: self._SPACES_AROUND_DOT_AT.sub(r"\1", match.group()), text
+        )
         text = re.sub(r"@[ \t]+", "@", text)
-        text = re.sub(r"\.[ \t]+", ".", text)
         text = self._SIGNOFF_PAT.sub(
             lambda match: f"{match.group(1)}{match.group(2).title()},\n",
             text,

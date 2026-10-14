@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from dictation_tool import config as config_module
 from dictation_tool.config import Config
 
 
@@ -175,3 +176,13 @@ class TestConfig:
         # Should accept Path object
         assert isinstance(cfg.log_dir, Path)
         assert cfg.log_dir == path_obj
+
+    @pytest.mark.parametrize("device_count,expected", [(0, "cpu"), (1, "cuda")])
+    def test_default_device_uses_inference_backend(
+        self, monkeypatch, device_count, expected
+    ):
+        monkeypatch.delenv("DICT__DEVICE", raising=False)
+        monkeypatch.setattr(
+            config_module, "get_cuda_device_count", lambda: device_count
+        )
+        assert Config().device == expected

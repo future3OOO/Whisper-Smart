@@ -412,3 +412,11 @@ class TestMainModule:
                 __main__.main()
 
         mock_engine_class.assert_not_called()
+
+    def test_cuda_guard_uses_inference_backend(self, monkeypatch, capsys):
+        monkeypatch.setattr(__main__, "get_cuda_device_count", lambda: 0)
+        monkeypatch.setattr("sys.argv", ["dictation_tool", "--device", "cuda"])
+        with pytest.raises(SystemExit) as error:
+            __main__.main()
+        assert error.value.code == 2
+        assert "CUDA requested but not available" in capsys.readouterr().err

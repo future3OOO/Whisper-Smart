@@ -78,6 +78,7 @@ class VADGate:
         self.pre_buffer: deque[bytes] = deque(maxlen=pre_buffer_chunks)
         self.speech_buffer: list[bytes] = []
         self.post_buffer: deque[bytes] = deque(maxlen=post_buffer_chunks)
+        self._pending_pcm = b""
 
         # Performance tracking
         self._frames_processed = 0
@@ -90,6 +91,7 @@ class VADGate:
         self.pre_buffer.clear()
         self.speech_buffer.clear()
         self.post_buffer.clear()
+        self._pending_pcm = b""
 
     def get_statistics(self) -> dict[str, int | str]:
         """Get processing statistics for monitoring."""
@@ -107,15 +109,14 @@ class VADGate:
         Returns segments only when speech has definitively ended,
         ensuring complete utterances are captured.
         """
-        pcm = chunk.tobytes()
+        pcm = self._pending_pcm + chunk.tobytes()
+        complete_bytes = len(pcm) // self.bytes_per_frame * self.bytes_per_frame
+        self._pending_pcm = pcm[complete_bytes:]
         results: list[Int16Audio] = []
 
         # Process each frame in the chunk
-        for i in range(0, len(pcm), self.bytes_per_frame):
+        for i in range(0, complete_bytes, self.bytes_per_frame):
             frame = pcm[i : i + self.bytes_per_frame]
-            if len(frame) < self.bytes_per_frame:
-                continue
-
             self._frames_processed += 1
 
             # VAD detection
@@ -200,8 +201,14 @@ class VADGate:
 
     def force_flush(self) -> Int16Audio | None:
         """Force flush any pending speech buffer (e.g., on session end)."""
+        pending_pcm = self._pending_pcm
+        self._pending_pcm = b""
         if self.speech_buffer:
             segment = self._create_segment()
+            if pending_pcm:
+                segment = np.concatenate(
+                    (segment, np.frombuffer(pending_pcm, dtype=np.int16))
+                )
             self._reset_for_next_utterance()
             return segment
         return None

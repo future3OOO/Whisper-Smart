@@ -6,7 +6,6 @@ Key features
 • Unlimited shadow buffer during mouse-hold (guarantees full 60 s capture)
 • Soft RMS gate (8 000) - keeps very quiet consonants
 • Thread-pool clipboard copy, fast Win32 path + retry paste
-• Flash-SDP / TF-32 GPU tuning
 • Regex post-processor:
     "foo at bar dot com"  →  foo@bar.com
     "www . example . com"→  www.example.com
@@ -28,7 +27,6 @@ from math import ceil
 
 import numpy as np
 import pyperclip  # type: ignore[import-untyped]
-import torch
 from keyboard import add_hotkey, is_pressed  # type: ignore[import-untyped]
 from keyboard import send as kb_send
 from numpy.typing import NDArray
@@ -265,22 +263,6 @@ class DictationEngine:
 
         self._rms: dict[tuple[int, int, int, int], int] = {}
 
-    # ──────────────────── GPU tuning ─────────────────────────
-    def _tune_cuda(self) -> None:
-        if self.cfg.device != "cuda" or not torch.cuda.is_available():
-            return
-        try:
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
-            maj, min_ = torch.cuda.get_device_capability()
-            tmaj, tmin = map(int, torch.__version__.split("+")[0].split(".")[:2])
-            if (maj, min_) >= (8, 0) and (tmaj, tmin) >= (2, 0):
-                if hasattr(torch.backends.cuda, "enable_flash_sdp"):
-                    torch.backends.cuda.enable_flash_sdp(True)
-                    LOGGER.info("Flash-Attention enabled")
-        except Exception as exc:
-            LOGGER.debug("CUDA tuning skipped: %s", exc)
-
     # ──────────────────── model load ─────────────────────────
     async def _load_model(self) -> None:
         if self.cfg.compute_type == "auto":
@@ -294,7 +276,7 @@ class DictationEngine:
                 device=self.cfg.device,
                 compute_type=self.cfg.compute_type,
                 cpu_threads=th,
-                num_workers=th,
+                num_workers=1,
             )
             backend.load()
             return backend
@@ -306,13 +288,12 @@ class DictationEngine:
                 self._model_pool, _sync
             )
 
-        self._tune_cuda()
         for n in (8_000, 16_000):
             dummy = np.random.randint(-500, 500, n, np.int16)
             try:
                 await self._transcribe(dummy)
-            except Exception:
-                pass
+            except Exception as exc:
+                LOGGER.warning("Model warmup failed: %s", exc)
         LOGGER.info("Model ready ✔")
 
     # ──────────────────── clipboard worker ───────────────────
@@ -387,7 +368,8 @@ class DictationEngine:
     # ──────────────────── shadow helper ──────────────────────
     def _add_to_shadow(self, chunk: Int16Audio) -> None:
         with self._audio_lock:
-            self._raw_shadow.append(chunk)
+            if self._recording.is_set() or self._mouse_press is not None:
+                self._raw_shadow.append(chunk)
 
     def _pop_raw_shadow(self) -> list[Int16Audio]:
         with self._audio_lock:

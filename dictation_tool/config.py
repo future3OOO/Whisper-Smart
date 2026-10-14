@@ -3,7 +3,7 @@ dictation_tool.config - unified runtime settings (v3.3-titan)
 --------------------------------------------------------------
 • Env-var overrides:  DICT__MODEL_NAME=base.en   (any field)
 • All legacy fields kept, plus new titan options
-• Type-checked, range-checked, and Torch-aware
+• Type-checked and range-checked
 """
 
 from __future__ import annotations
@@ -13,11 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
-try:
-    import torch
-except ImportError:
-    torch = None  # type: ignore
-
+from ctranslate2 import get_cuda_device_count
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -44,9 +40,7 @@ class Config(BaseSettings):
     model_name: str = Field("large-v3-turbo", description="Whisper checkpoint")
     compute_type: ComputeType = "auto"
     device: str = Field(
-        default_factory=lambda: (
-            "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
-        )
+        default_factory=lambda: ("cuda" if get_cuda_device_count() > 0 else "cpu")
     )
     beam_size: int = 5
     best_of: int = 1
@@ -159,23 +153,5 @@ class Config(BaseSettings):
                 (0.0, 0.6) if self.device == "cuda" else (0.0, 0.4, 0.7)
             )
             object.__setattr__(self, "retry_temperatures", retry_temperatures)
-
-        # -------- torch compatibility -----------
-        try:
-            import torch
-
-            major, minor = map(int, torch.__version__.split("+")[0].split(".")[:2])
-            if self.torch_compile_mode != "off" and (major, minor) < (2, 1):
-                print("torch.compile needs PyTorch >=2.1 - disabling.", file=sys.stderr)
-                object.__setattr__(self, "torch_compile_mode", "off")
-
-            if self.attention_backend != "none" and (major, minor) < (2, 0):
-                print(
-                    "Flash/Mem-Eff attention need PyTorch >=2.0 - disabling.",
-                    file=sys.stderr,
-                )
-                object.__setattr__(self, "attention_backend", "none")
-        except ImportError:
-            pass
 
         return self

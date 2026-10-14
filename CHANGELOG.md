@@ -25,6 +25,14 @@ the project adheres to [Semantic Versioning](https://semver.org).
   the current `webrtcvad` import path working on fresh installs.
 
 ### Fixed
+- Paused microphone callbacks no longer accumulate unbounded shadow audio;
+  mouse-press pre-roll and active recordings are preserved.
+- Inference uses one model worker and no longer initializes PyTorch tuning
+  alongside the CTranslate2 backend. Fresh runtime installs use native NVIDIA
+  libraries without PyTorch, torchvision, torchaudio or Flash-Attention.
+- VAD preserves partial frames across callbacks and flushes active audio tails.
+- Email normalization preserves ordinary sentence spacing, and benchmark WER
+  supports Unicode words.
 - No-VAD ring buffer works under the current NumPy stack and returns full
   buffers correctly.
 - CLI wiring now applies `--chunk-ms` and benchmark mode no longer starts live

@@ -40,6 +40,13 @@ def test_word_error_rate_scores_reference_against_candidate():
     assert word_error_rate("hello world", "hello world") == 0.0
     assert word_error_rate("hello, world!", "hello world") == 0.0
     assert word_error_rate("hello brave world", "hello world") == 1 / 3
+    assert word_error_rate("don't stop 42", "dont stop 42") == 1 / 3
+
+
+def test_word_error_rate_preserves_unicode_words():
+    assert word_error_rate("你好 世界", "再见 世界") == 0.5
+    assert word_error_rate("kāinga pai", "kainga pai") == 0.5
+    assert word_error_rate("ПРИВЕТ МИР", "пока мир") == 0.5
 
 
 def test_load_wav_mono_int16_resamples_pcm_fixture(tmp_path):

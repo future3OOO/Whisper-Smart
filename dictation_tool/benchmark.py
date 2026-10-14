@@ -20,7 +20,7 @@ DEFAULT_MODEL_MATRIX = (
 )
 
 Int16Audio = NDArray[np.int16]
-TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)?")
+TOKEN_RE = re.compile(r"[^\W_]+(?:'[^\W_]+)?")
 
 
 def parse_model_matrix(value: str | None) -> tuple[str, ...]:

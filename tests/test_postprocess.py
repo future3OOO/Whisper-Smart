@@ -3,6 +3,23 @@
 from dictation_tool.postprocess import DictationPostProcessor
 
 
+def test_postprocess_preserves_spaces_between_sentences():
+    post = DictationPostProcessor()
+
+    assert post.process("Hello. Next sentence.") == "Hello. Next sentence."
+
+
+def test_postprocess_normalises_email_spacing_without_joining_sentences():
+    post = DictationPostProcessor()
+
+    assert (
+        post.process(
+            "email john\u00a0.\u00a0smith\u00a0@\u00a0gmail\u00a0.\u00a0com. Next sentence."
+        )
+        == "Email john.smith@gmail.com. Next sentence."
+    )
+
+
 def test_postprocess_formats_email_address_and_spacing():
     post = DictationPostProcessor()
 

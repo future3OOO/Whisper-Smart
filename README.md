@@ -2,7 +2,7 @@
 
 > **Hold your mouse button, speak, release, and watch text materialise wherever your cursor is.**
 
-A lightning-fast desktop dictation utility for **Windows 10/11** (Linux & macOS untested) powered by [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) and accelerated by **Flash-Attention 2**.
+A desktop dictation utility for **Windows 10/11** (Linux & macOS untested) powered by [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) and CTranslate2.
 
 <p align="center">
   <img src="docs/demo.gif" width="640" alt="Whisper-Smart hold-to-talk demo">
@@ -15,7 +15,7 @@ A lightning-fast desktop dictation utility for **Windows 10/11** (Linux & macOS 
 |                              |                                                                                               |
 | ---------------------------- | --------------------------------------------------------------------------------------------- |
 | **Instant hold-to-record**   | Press the chosen mouse button (default = right) for ≥ 0.2 s, speak, release to paste.         |
-| **Ultra-low latency**        | CUDA 12 + Flash-Attention 2 kernels & zero-copy audio pipeline.                                |
+| **GPU inference**            | CTranslate2 with CUDA 12 and cuDNN 9.                                                         |
 | **Smart VAD**                | Real-time segmentation with tolerant fallback—no lost syllables.                              |
 | **Context memory**           | Remembers recent sentences for better proper-noun accuracy.                                   |
 | **Clipboard modes**          | Auto-paste, copy-only, or clipboard-off.                                                      |
@@ -40,11 +40,19 @@ python -m venv .venv
 .venv\Scripts\activate           # Windows
 # source .venv/bin/activate      # macOS / Linux
 
-# 3) Install runtime deps (PyTorch wheel index embedded)
+# 3) Install runtime dependencies, including Windows CUDA libraries
 pip install -r requirements.txt
 ```
 
 Developer tooling (pytest, ruff, etc.) lives in requirements-dev.txt.
+
+Use a fresh virtual environment when upgrading from the PyTorch-based dependency
+set. PyTorch is not required for dictation; if installed, CTranslate2's optional
+model-conversion imports can still load it and increase committed memory.
+Legacy `--torch-compile-mode` and `--attention-backend` arguments remain accepted
+for existing launch configurations, but do not tune CTranslate2 inference.
+Paused microphone audio is discarded; mouse-press pre-roll and active dictation
+are retained. Inference uses one model worker, matching the app's serial queue.
 
 ## 🚀 Quick start & mic tuning
 

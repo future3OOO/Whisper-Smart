@@ -14,6 +14,8 @@ import wave
 from pathlib import Path
 from typing import cast
 
+from ctranslate2 import get_cuda_device_count
+
 from dictation_tool.benchmark import Int16Audio, load_wav_mono_int16, parse_model_matrix
 from dictation_tool.config import Config
 from dictation_tool.engine import DictationEngine
@@ -226,14 +228,8 @@ def main() -> None:
     LOGGER.setLevel("DEBUG" if args.verbose else "WARNING" if args.quiet else "INFO")
 
     # CUDA guard
-    if args.device == "cuda":
-        try:
-            import torch
-
-            if not torch.cuda.is_available():
-                parser.error("CUDA requested but not available; use --device cpu")
-        except ImportError:
-            parser.error("PyTorch not installed - cannot enable CUDA")
+    if args.device == "cuda" and get_cuda_device_count() == 0:
+        parser.error("CUDA requested but not available; use --device cpu")
 
     # model override for CI
     model_name = "tiny.en" if args.tiny_model else args.model

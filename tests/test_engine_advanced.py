@@ -10,6 +10,7 @@ from hypothesis import strategies as st
 from dictation_tool import engine as engine_module
 from dictation_tool.config import Config
 from dictation_tool.engine import DictationEngine, _Ring
+from dictation_tool.io import AudioStream
 from dictation_tool.transcription import TranscriptionResult
 
 # ────────────────────────────────────────────────────────────────
@@ -40,6 +41,37 @@ class TestAdvancedDictationEngine:
         return backend
 
     # ── basic object state ──────────────────────────────────────
+    def test_paused_microphone_does_not_retain_audio(self):
+        eng = DictationEngine(Config(device="cpu"))
+        stream = AudioStream(16000, on_raw_chunk=eng._add_to_shadow)
+        frame = np.ones((160, 1), dtype=np.int16)
+        try:
+            for _ in range(2000):
+                stream._callback(frame, len(frame))
+                stream._q.get_nowait()
+            assert eng._pop_raw_shadow() == []
+        finally:
+            eng.stop()
+
+    @pytest.mark.parametrize("recording", [False, True])
+    def test_microphone_preserves_hold_preroll_and_active_audio(self, recording):
+        eng = DictationEngine(Config(device="cpu", max_buffer_seconds=6))
+        stream = AudioStream(16000, on_raw_chunk=eng._add_to_shadow)
+        if recording:
+            eng._recording.set()
+        else:
+            eng._mouse_press = 1.0
+        frame = np.ones((160, 1), dtype=np.int16)
+        try:
+            for _ in range(2000):
+                stream._callback(frame, len(frame))
+                stream._q.get_nowait()
+            chunks = eng._pop_raw_shadow()
+            assert len(chunks) == 2000
+            assert sum(chunk.size for chunk in chunks) == 320000
+        finally:
+            eng.stop()
+
     def test_engine_initialisation(self):
         cfg = Config(
             device="cuda",
@@ -71,7 +103,7 @@ class TestAdvancedDictationEngine:
             device="cuda",
             compute_type="float16",
             cpu_threads=12,
-            num_workers=12,
+            num_workers=1,
         )
         backend.load.assert_called_once()
         assert eng._backend is backend
@@ -79,14 +111,14 @@ class TestAdvancedDictationEngine:
     # ── model-load path (CPU) ───────────────────────────────────
     @patch("dictation_tool.engine.FasterWhisperBackend")
     @pytest.mark.asyncio
-    async def test_load_model_cpu_no_compile(self, mock_backend_cls):
+    async def test_load_model_cpu(self, mock_backend_cls):
         mock_backend_cls.return_value = Mock()
         cfg = Config(device="cpu", attention_backend="none")
         eng = DictationEngine(cfg)
 
-        with patch("dictation_tool.engine.torch.compile") as m_compile:
-            await eng._load_model()
-            m_compile.assert_not_called()
+        await eng._load_model()
+        assert mock_backend_cls.call_args.kwargs["device"] == "cpu"
+        mock_backend_cls.return_value.load.assert_called_once()
 
     # ── trigger install ────────────────────────────────────────
     @patch("dictation_tool.engine.add_hotkey")
@@ -234,6 +266,7 @@ class TestAdvancedDictationEngine:
     async def test_flush_hold_snapshots_shadow_before_concatenate(self, monkeypatch):
         cfg = Config(device="cpu", attention_backend="none", use_vad=True)
         eng = DictationEngine(cfg)
+        eng._recording.set()
         shadow = np.ones(1600, dtype=np.int16)
         concurrent = np.full(800, 2, dtype=np.int16)
         captured = {}
@@ -408,6 +441,7 @@ class TestAdvancedDictationEngine:
     def test_chunk_counter(self, vals):
         cfg = Config(device="cpu", attention_backend="none")
         eng = DictationEngine(cfg)
+        eng._recording.set()
         chunk = np.array(vals, dtype=np.int16)
         eng._add_to_shadow(chunk)
         np.testing.assert_array_equal(eng._raw_shadow[0], chunk)
