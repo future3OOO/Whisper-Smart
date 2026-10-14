@@ -2,7 +2,7 @@
 
 > **Hold your mouse button, speak, release, and watch text materialise wherever your cursor is.**
 
-A lightning-fast desktop dictation utility for **Windows 10/11** (Linux & macOS untested) powered by [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) and accelerated by **Flash-Attention 2**.
+A desktop dictation utility for **Windows 10/11** (Linux & macOS untested) powered by [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) and CTranslate2.
 
 <p align="center">
   <img src="docs/demo.gif" width="640" alt="Whisper-Smart hold-to-talk demo">
@@ -15,7 +15,7 @@ A lightning-fast desktop dictation utility for **Windows 10/11** (Linux & macOS 
 |                              |                                                                                               |
 | ---------------------------- | --------------------------------------------------------------------------------------------- |
 | **Instant hold-to-record**   | Press the chosen mouse button (default = right) for ≥ 0.2 s, speak, release to paste.         |
-| **Ultra-low latency**        | CUDA 12 + Flash-Attention 2 kernels & zero-copy audio pipeline.                                |
+| **GPU inference**            | CTranslate2 with CUDA 12 and cuDNN 9.                                                         |
 | **Smart VAD**                | Real-time segmentation with tolerant fallback—no lost syllables.                              |
 | **Context memory**           | Remembers recent sentences for better proper-noun accuracy.                                   |
 | **Clipboard modes**          | Auto-paste, copy-only, or clipboard-off.                                                      |
@@ -40,11 +40,19 @@ python -m venv .venv
 .venv\Scripts\activate           # Windows
 # source .venv/bin/activate      # macOS / Linux
 
-# 3) Install runtime deps (PyTorch wheel index embedded)
+# 3) Install runtime dependencies, including Windows CUDA libraries
 pip install -r requirements.txt
 ```
 
 Developer tooling (pytest, ruff, etc.) lives in requirements-dev.txt.
+
+Use a fresh virtual environment when upgrading from the PyTorch-based dependency
+set. PyTorch is not required for dictation; if installed, CTranslate2's optional
+model-conversion imports can still load it and increase committed memory.
+Legacy `--torch-compile-mode` and `--attention-backend` arguments remain accepted
+for existing launch configurations, but do not tune CTranslate2 inference.
+Paused microphone audio is discarded; mouse-press pre-roll and active dictation
+are retained. Inference uses one model worker, matching the app's serial queue.
 
 ## 🚀 Quick start & mic tuning
 
@@ -73,8 +81,35 @@ Latency ≈ 200-500 ms on an RTX 3080. Designed for 20-30 s dictation bursts.
 
 #### 💨 Option B — Maximum speed (medium.en + prompt tricks)
 
-medium.en delivers ≈ 5-20 ms interface latency while staying surprisingly
-accurate when paired with a good prompt and a larger beam.
+medium.en delivers ≈ 5-200 ms interface latency while staying surprisingly
+accurate when paired with a preset and a larger beam.
+
+#### ⚖️ Evidence-gated modern default
+
+The default model is now `large-v3-turbo` for English dictation. On the
+RTX 3080 Windows/CUDA 12 test machine it is nearly as fast as `distil-large-v3`
+on benchmark fixtures, and real dictation feedback showed better accuracy.
+
+```powershell
+# Benchmark the current configured model only
+python -m dictation_tool --device cuda --bench
+
+# Compare the recommended model matrix
+python -m dictation_tool --device cuda --bench --bench-models default --bench-runs 3
+
+# Compare a custom pair
+python -m dictation_tool --device cuda --bench --bench-models large-v3-turbo,distil-large-v3
+
+# Benchmark a WAV fixture and emit JSONL timings
+python -m dictation_tool --device cuda --bench --bench-audio .\fixture.wav --profile .\benchmark.jsonl
+
+# Score a known transcript and compare without faster-whisper internal VAD
+python -m dictation_tool --device cuda --bench --bench-audio .\fixture.wav --bench-reference "known transcript" --no-model-vad
+```
+
+Use `large-v3-turbo` as the balanced English default, `distil-large-v3` as the
+maximum-speed English option, `large-v3` as the multilingual/accuracy baseline,
+and `medium.en` as the legacy fast English baseline.
 
 ## 📧 Fast e-mail workflow — preset **email**
 
@@ -152,9 +187,9 @@ Larger beam sizes (e.g. 6-8) are supported but add latency.
 
 | Goal | Flag | Example (PowerShell) |
 |------|------|---------------------|
-| Disable VAD for long monologues | `--no-vad` | ... --no-vad --max-buffer-seconds 30 |
+| Disable VAD for long monologues | `--no-vad` | ... --no-vad --max-buffer-s 30 |
 | Tolerate longer pauses | `--vad-aggr` | --vad-aggr 1 (0 =tolerant … 3 =strict) |
-| Copy without pasting | `--manual-paste` | ... --manual-paste |
+| Copy without pasting | `--copy-only` | ... --copy-only |
 | Change mouse trigger | `--mouse-btn` | --mouse-btn middle |
 | Use hotkey only (no mouse) | `--no-mouse` | ... --no-mouse |
 
@@ -170,6 +205,9 @@ python -m dictation_tool --help
 dictation_tool/
 ├─ __main__.py     # CLI entry-point
 ├─ engine.py       # DictationEngine core
+├─ transcription.py # faster-whisper backend adapter
+├─ postprocess.py   # deterministic transcript formatting
+├─ benchmark.py     # benchmark matrix and accuracy helpers
 ├─ io.py           # Audio + VAD helpers
 └─ …               # More modules
  tests/

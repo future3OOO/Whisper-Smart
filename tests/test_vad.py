@@ -149,7 +149,9 @@ class TestVADGate:
         # Process consecutive speech frames to trigger speech detection
         mock_vad.is_speech.return_value = True
         results = []
-        for _ in range(4):  # Process enough chunks for consecutive speech + end detection
+        for _ in range(
+            4
+        ):  # Process enough chunks for consecutive speech + end detection
             results.extend(list(vad(chunk)))
 
         # Then add silence to trigger speech end
@@ -179,25 +181,28 @@ class TestVADGate:
             consecutive_silence_frames=3,
         )
 
-        # Start with speech
+        # Start with enough speech frames to enter speech state.
         mock_vad.is_speech.return_value = True
-        result1 = list(vad(chunk))
-        assert len(result1) > 0
+        assert list(vad(chunk)) == []
+        assert list(vad(chunk)) == []
 
         # Add silence frames until cutoff
         mock_vad.is_speech.return_value = False
-        for _ in range(4):  # More than padding_frames
-            list(vad(chunk))
+        results = []
+        for _ in range(3):
+            results.extend(list(vad(chunk)))
 
-        # Ring buffer should be at max capacity and stop processing
-        assert len(vad.ring) == vad.ring.maxlen
+        assert len(results) == 1
+        assert results[0].dtype == np.int16
 
     @given(
         chunk_size=st.integers(min_value=100, max_value=2000),
         aggressiveness=st.integers(min_value=0, max_value=3),
     )
     @patch("dictation_tool.io.webrtcvad.Vad")
-    def test_vadgate_various_chunk_sizes(self, mock_vad_class, chunk_size, aggressiveness):
+    def test_vadgate_various_chunk_sizes(
+        self, mock_vad_class, chunk_size, aggressiveness
+    ):
         """Property-based test for various chunk sizes."""
         mock_vad = Mock()
         mock_vad_class.return_value = mock_vad
@@ -226,7 +231,7 @@ class TestVADGate:
 
     def test_vadgate_empty_chunk(self):
         """Test VADGate handles empty chunks gracefully."""
-        vad = VADGate(sample_rate=16000, aggressiveness=2, padding_ms=200)
+        vad = VADGate(sample_rate=16000, aggressiveness=2)
 
         empty_chunk = np.array([], dtype=np.int16)
         result = list(vad(empty_chunk))
@@ -242,9 +247,11 @@ class TestVADGate:
         mock_vad.is_speech.return_value = True
 
         # Create chunk that doesn't align perfectly with frame boundaries
-        chunk = np.random.randint(-32768, 32767, size=500, dtype=np.int16)  # Not exact frame size
+        chunk = np.random.randint(
+            -32768, 32767, size=500, dtype=np.int16
+        )  # Not exact frame size
 
-        vad = VADGate(sample_rate=16000, aggressiveness=2, padding_ms=200)
+        vad = VADGate(sample_rate=16000, aggressiveness=2)
 
         result = list(vad(chunk))
 
@@ -259,19 +266,24 @@ class TestVADGate:
 
         chunk = np.random.randint(-32768, 32767, size=480, dtype=np.int16)
 
-        vad = VADGate(sample_rate=16000, aggressiveness=2, padding_ms=60)  # Small buffer
+        vad = VADGate(
+            sample_rate=16000,
+            aggressiveness=2,
+            pre_buffer_chunks=2,
+            post_buffer_chunks=2,
+        )
 
-        # Fill ring buffer with silence
+        # Fill pre-buffer with silence
         mock_vad.is_speech.return_value = False
         for _ in range(10):  # More than buffer capacity
             list(vad(chunk))
 
-        # Ring buffer should not exceed maxlen
-        assert len(vad.ring) <= vad.ring.maxlen
+        # Pre-buffer should not exceed maxlen
+        assert len(vad.pre_buffer) <= vad.pre_buffer.maxlen
 
     def test_vadgate_bytes_conversion(self):
         """Test VADGate correctly converts numpy arrays to bytes."""
-        VADGate(sample_rate=16000, aggressiveness=2, padding_ms=200)
+        VADGate(sample_rate=16000, aggressiveness=2)
 
         # Create test chunk
         chunk = np.array([1000, -1000, 2000, -2000], dtype=np.int16)
@@ -293,7 +305,7 @@ class TestVADGate:
     )
     def test_vadgate_frame_size_calculation(self, sample_rate, expected_bytes):
         """Test VADGate calculates frame sizes correctly for different sample rates."""
-        vad = VADGate(sample_rate=sample_rate, aggressiveness=2, padding_ms=200)
+        vad = VADGate(sample_rate=sample_rate, aggressiveness=2)
 
         assert vad.bytes_per_frame == expected_bytes
 
@@ -305,15 +317,17 @@ class TestVADGate:
 
         chunk = np.random.randint(-32768, 32767, size=480, dtype=np.int16)
 
-        vad = VADGate(sample_rate=16000, aggressiveness=2, padding_ms=90)
+        vad = VADGate(sample_rate=16000, aggressiveness=2, pre_buffer_chunks=3)
 
-        # Add some silence to ring buffer
+        # Add some silence to pre-buffer
         mock_vad.is_speech.return_value = False
         list(vad(chunk))
-        initial_ring_len = len(vad.ring)
+        initial_buffer_len = len(vad.pre_buffer)
 
         # Add more silence
         list(vad(chunk))
 
-        # Ring buffer should have grown
-        assert len(vad.ring) > initial_ring_len or len(vad.ring) == vad.ring.maxlen
+        # Pre-buffer should have grown up to maxlen
+        assert len(vad.pre_buffer) > initial_buffer_len or (
+            len(vad.pre_buffer) == vad.pre_buffer.maxlen
+        )

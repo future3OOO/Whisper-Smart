@@ -6,29 +6,19 @@
 #   py -3.10 -m pip install -r requirements-windows-cu12.txt
 ###############################################################################
 
-# ---------------------------------------------------------------------------
-# Extra indexes / direct wheels
-# ---------------------------------------------------------------------------
---extra-index-url https://download.pytorch.org/whl/cu121
---find-links      https://huggingface.co/lldacing/flash-attention-windows-wheel/resolve/main
-
-# Flash-Attention 2 pre-built wheel (CUDA 12.4 kernels, works on 12.1+ drivers)
-flash-attn @ https://huggingface.co/lldacing/flash-attention-windows-wheel/resolve/main/flash_attn-2.7.4%2Bcu124torch2.5.1cxx11abiFALSE-cp310-cp310-win_amd64.whl
-
 ###############################################################################
 # Core transcription & audio
 ###############################################################################
-torch==2.5.1+cu121          ; python_version == "3.10"
-torchaudio==2.5.1+cu121     ; python_version == "3.10"
-torchvision==0.20.1+cu121   ; python_version == "3.10"
-
-faster-whisper>=1.1.1
-einops>=0.8.1               # flash-attn dep
+ctranslate2>=4.7.1,<5
+faster-whisper>=1.2.1,<2
+nvidia-cublas-cu12          ; sys_platform == "win32"
+nvidia-cudnn-cu12>=9,<10     ; sys_platform == "win32"
 
 sounddevice>=0.4.6
 soundfile>=0.12.1
 numpy>=1.23.5
 webrtcvad>=2.0.10           # tiny CPU VAD
+setuptools<81               # webrtcvad imports pkg_resources
 
 ###############################################################################
 # User input & automation
@@ -43,4 +33,3 @@ pyautogui>=0.9.54
 # Optional acceleration back-ends
 ###############################################################################
 onnxruntime-gpu>=1.16.0      ; extra == "onnx"
-ctranslate2>=4.1.0           ; extra == "ctranslate2"
