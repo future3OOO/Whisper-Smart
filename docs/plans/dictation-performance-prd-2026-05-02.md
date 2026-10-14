@@ -140,7 +140,9 @@ Live matrix results:
   clipboard behavior, startup warmup and model-thread ownership.
 - [x] Reproduce and resolve Cubic's remaining VAD framing, sentence spacing
   and Unicode WER findings. Segment confidence was already resolved.
-- [x] Run 149 non-GPU tests, three real GPU smoke tests, Ruff, Black, mypy and
+- [x] Normalize canonically equivalent Unicode benchmark tokens and narrow
+  ambiguous dot-as-email conversion to the existing Gmail fallback.
+- [x] Run 154 non-GPU tests, three real GPU smoke tests, Ruff, Black, mypy and
   dependency checks successfully.
 - [ ] Activate the replacement runtime after the operator permits the brief
   dictation interruption; the existing running app is unchanged.

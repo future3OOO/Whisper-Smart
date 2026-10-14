@@ -49,6 +49,11 @@ def test_word_error_rate_preserves_unicode_words():
     assert word_error_rate("ПРИВЕТ МИР", "пока мир") == 0.5
 
 
+def test_word_error_rate_matches_canonically_equivalent_words():
+    assert word_error_rate("kāinga pai", "ka\u0304inga pai") == 0.0
+    assert word_error_rate("ka\u0304inga pai", "KĀINGA PAI") == 0.0
+
+
 def test_load_wav_mono_int16_resamples_pcm_fixture(tmp_path):
     path = tmp_path / "fixture.wav"
     audio = np.array([0, 1000, -1000, 0], dtype=np.int16)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 import wave
 from collections.abc import Iterable
 from math import ceil
@@ -82,8 +83,8 @@ def load_wav_mono_int16(path: Path, sample_rate: int) -> Int16Audio:
 
 def word_error_rate(reference: str, candidate: str) -> float:
     """Compute word error rate with a small Levenshtein distance implementation."""
-    ref = TOKEN_RE.findall(reference.lower())
-    hyp = TOKEN_RE.findall(candidate.lower())
+    ref = TOKEN_RE.findall(unicodedata.normalize("NFC", reference.lower()))
+    hyp = TOKEN_RE.findall(unicodedata.normalize("NFC", candidate.lower()))
     if not ref:
         return 0.0 if not hyp else 1.0
 

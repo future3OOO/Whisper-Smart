@@ -1,6 +1,20 @@
 """Golden tests for deterministic transcript post-processing."""
 
+import pytest
+
 from dictation_tool.postprocess import DictationPostProcessor
+
+
+@pytest.mark.parametrize(
+    "spoken, expected",
+    [
+        ("check the site dot example dot org", "Check the site. example. org"),
+        ("version two dot zero dot one", "Version two. zero. one"),
+        ("visit example . org", "Visit example.org"),
+    ],
+)
+def test_postprocess_does_not_invent_email_addresses(spoken, expected):
+    assert DictationPostProcessor().process(spoken) == expected
 
 
 def test_postprocess_preserves_spaces_between_sentences():
@@ -25,6 +39,13 @@ def test_postprocess_formats_email_address_and_spacing():
 
     assert post.process("please email john at sign gmail dot com") == (
         "Please email john@gmail.com"
+    )
+
+
+def test_postprocess_formats_explicit_email_at_custom_domain():
+    assert (
+        DictationPostProcessor().process("please email john at sign example dot org")
+        == "Please email john@example.org"
     )
 
 

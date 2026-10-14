@@ -34,7 +34,7 @@ class DictationPostProcessor:
     }
     _EMAIL_RE: ClassVar[re.Pattern[str]] = re.compile(
         r"\b(?!www\b)([a-zA-Z0-9][\w.-]*)\s+"
-        r"(?:at(?:\s+(?:sign|symbol))?|dot)\s+"
+        r"(?:at(?:\s+(?:sign|symbol))?|dot(?=\s+gmail(?:\s+dot\s+|\.)com\b))\s+"
         r"([a-zA-Z0-9-]+(?:(?:\s+dot\s+|\.)[a-zA-Z0-9-]+)+)\b",
         re.I,
     )
